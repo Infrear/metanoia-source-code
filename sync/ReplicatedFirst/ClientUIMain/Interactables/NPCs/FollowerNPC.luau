@@ -1,6 +1,3 @@
--- FollowerNPC.luau (updated)
--- Client-driven cosmetic NPC follower module.
-
 --Services
 local RS = game:GetService("RunService")
 local RPS = game:GetService("ReplicatedStorage")
