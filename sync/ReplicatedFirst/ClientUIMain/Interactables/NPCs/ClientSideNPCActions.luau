@@ -134,15 +134,15 @@ Actions["StartFollowing"] = function(npcObject, destinationName)
 			if myChar and myChar.PrimaryPart then
 				local distance = (myChar:GetPivot().Position - destinationPart.Position).Magnitude
 
-				-- if distance <= ARRIVAL_DISTANCE then
-				-- 	-- Final token verification before acting destructively
-				-- 	if localToken == sequenceTokens[npcObject] then
-				-- 		print("Destination reached, firing server.")
-				-- 		questVerifyRem:FireServer("locationReached", npcObject.Name, destinationName)
-				-- 		Actions["StopFollowing"](npcObject)
-				-- 	end
-				-- 	break
-				-- end
+				 if distance <= ARRIVAL_DISTANCE then
+				 	-- Final token verification before acting destructively
+				 	if localToken == sequenceTokens[npcObject] then
+				 		print("Destination reached, firing server.")
+				 		questVerifyRem:FireServer("locationReached", npcObject.Name, destinationName)
+				 		Actions["StopFollowing"](npcObject)
+				 	end
+				 	break
+				 end
 			end
 		end
 	end)

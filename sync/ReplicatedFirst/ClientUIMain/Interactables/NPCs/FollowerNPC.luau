@@ -62,7 +62,7 @@ function FollowerNPC.new(sourceModel: Model, config)
 	local oldHumanoid = self.rig:FindFirstChildOfClass("Humanoid")
 	if oldHumanoid then oldHumanoid:Destroy() end
 
-	-- disable collision on baseparts
+	-- disable collision for smooth client-side cframe movement
 	for _, desc in ipairs(self.rig:GetDescendants()) do
 		if desc:IsA("BasePart") then
 			desc.CanCollide = false
@@ -93,28 +93,31 @@ function FollowerNPC.new(sourceModel: Model, config)
 		end
 	end
 
-	-- constants
+	-- task threshold constants
 	self.DISTANCE_START_FOLLOW = 10
 	self.DISTANCE_STOP_FOLLOW = 4
 	self.MOVE_SPEED = 12
-	self.TURN_SPEED = 10
+	self.TURN_SPEED = 10 -- speed scale for smooth turning rotation
 	self.HIP_HEIGHT = self.rig:GetAttribute("HipHeightFallback") --getHipHeight(self.rig)
+	
+	-- debug visualization toggle
 	self.DEBUG_MODE = false
 
-	self.MAX_VERTICAL_OFFSET = 6.0
-	self.LANDING_DROP_THRESHOLD = 2
-	self.MAX_SAFE_FALL_DEPTH = 25.0
-	self.DEEP_FALL_RAY_LENGTH = 50.0
-	self.MAX_TELEPORT_RANGE = 60.0
-	self.TELEPORT_WAIT_DELAY = 1.5
-	self.VERIFY_SAFE_DELAY = 0.5
-	self.FADE_DURATION = 0.3
-	self.GRAVITY = 150.0
-	self.CAUTIOUS_DOUBLE_CHECK_EXTRA_LENGTH = 15.0
+	self.MAX_VERTICAL_OFFSET = 6.0 -- height difference threshold before y distance factors into magnitude
+	self.LANDING_DROP_THRESHOLD = 2 -- downward Y drop threshold to trigger landing animation & lerp
+	self.MAX_SAFE_FALL_DEPTH = 25.0 -- maximum safe downward drop depth before treating as deep fall/void
+	self.DEEP_FALL_RAY_LENGTH = 50.0 -- downward raycast depth for void detection
+	self.MAX_TELEPORT_RANGE = 60.0 -- maximum distance before triggering vanish teleport sequence
+	self.TELEPORT_WAIT_DELAY = 1.5 -- initial delay in seconds before attempting teleport
+	self.VERIFY_SAFE_DELAY = 0.5 -- verification delay to ensure target spot is not temporary
+	self.FADE_DURATION = 0.3 -- transparency fade duration in seconds
+	self.GRAVITY = 150.0 -- downward gravity acceleration scale for falling
+	self.CAUTIOUS_DOUBLE_CHECK_EXTRA_LENGTH = 15.0 -- extra length for cautious double check raycast
 	self.FORWARD_EDGE_BUFFER = 2.5 -- forward look-ahead distance in studs to detect ledges before stepping over
-	self.MAX_LOOK_UP_ANGLE = math.rad(80)
-	self.MIN_LOOK_UP_EXIT_ANGLE = math.rad(60)
+	self.MAX_LOOK_UP_ANGLE = math.rad(80)     -- must exceed this to START the pause
+	self.MIN_LOOK_UP_EXIT_ANGLE = math.rad(60) -- must drop below THIS to be considered resolved
 
+	-- animation thresholds based on animation manager reference
 	self.SPEED_THRESHOLD = 0.75
 	self.RUN_THRESHOLD = 8.0
 
@@ -149,10 +152,12 @@ function FollowerNPC.new(sourceModel: Model, config)
 	self.lastRayVisTime = 0
 	self.isVoidOrDeepFall = false
 
+	-- state tracking for delayed teleport routine
 	self.isTeleporting = false
 	self.currentTeleportReason = nil
 	self.teleportToken = 0
 
+	-- active transparency tweens table following roblox-tween-management workflow
 	self.TES = {}
 	self.renderConn = nil
 
@@ -161,6 +166,10 @@ function FollowerNPC.new(sourceModel: Model, config)
 	return self
 end
 
+-- Tweens all baseparts, decals, and textures in the model to target transparency
+-- targetTransparency          - target numeric transparency (0 to 1)
+-- duration                    - fade duration in seconds
+-- fallbacktoOgTransparency   - if true, restores stored original transparency attribute
 function FollowerNPC:FadeModelTransparency(targetTransparency, duration, fallbacktoOgTransparency)
 	local fadeTime = duration or self.FADE_DURATION
 	local TI = TweenInfo.new(fadeTime, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
@@ -180,6 +189,9 @@ function FollowerNPC:FadeModelTransparency(targetTransparency, duration, fallbac
 	task.wait(fadeTime)
 end
 
+-- Plays a specific animation state with smooth transition time
+-- stateName      - "Idle", "Walk", "Run", or "Land"
+-- transitionTime - optional crossfade duration in seconds
 function FollowerNPC:_setAnimState(stateName, transitionTime)
 	local fadeTime = transitionTime or 0.35
 	if self.currentAnimState == stateName then return end
@@ -199,6 +211,9 @@ function FollowerNPC:_setAnimState(stateName, transitionTime)
 	end
 end
 
+-- Adjusts active animation playback speed according to current movement velocity
+-- speed - current movement speed in studs per second
+-- scale - speed scaling factor
 function FollowerNPC:_setAnimationSpeed(speed, scale)
 	local currentTrack = self.animTracks[self.currentAnimState]
 	if currentTrack and currentTrack.IsPlaying then
@@ -220,6 +235,9 @@ function FollowerNPC:_getEffectiveDistance(posA, posB)
 	return math.sqrt(horizontalDist^2 + effectiveY^2)
 end
 
+-- Checks whether the player is currently near-vertically aligned with the NPC
+-- (directly above or below) — the exact geometry that collapses the horizontal
+-- direction vector to zero and breaks dir/rotation math downstream.
 function FollowerNPC:_isLookingStraightUp(plrRoot, force)
 	local currentPos = self.rootPart.Position
 	local targetPos = plrRoot.Position
@@ -228,18 +246,20 @@ function FollowerNPC:_isLookingStraightUp(plrRoot, force)
 	local horizontalDist = (flatTarget - flatCurrent).Magnitude
 	local yDiff = math.abs(targetPos.Y - currentPos.Y)
 
-	if yDiff < 1 then return false end
+	if yDiff < 1 then return false end -- not enough vertical gap for this to be ambiguous
 
 	local angle = math.atan2(yDiff, horizontalDist)
 	return angle > (force or self.MAX_LOOK_UP_ANGLE)
 end
 
+-- Checks if a position behind the player offers safe ground
+-- targetPos - player root position
 function FollowerNPC:_getSafeTeleportCFrame(plrRoot, targetPos)
 	local offsets = {
 		CFrame.new(0, 0, 3),
-		--CFrame.new(3, 0, 0),
-		--CFrame.new(-3, 0, 0),
-		--CFrame.new(0, 0, -3),
+		CFrame.new(3, 0, 0),
+		CFrame.new(-3, 0, 0),
+		CFrame.new(0, 0, -3),
 	}
 
 	for _, offsetCFrame in ipairs(offsets) do
@@ -266,6 +286,7 @@ function FollowerNPC:_getSafeTeleportCFrame(plrRoot, targetPos)
 	return nil
 end
 
+-- Checks if the path directly in front of the NPC is currently walkable towards the player
 function FollowerNPC:_checkPathAheadWalkable(plrRoot)
 	local currentPos = self.rootPart.Position
 	local targetPos = plrRoot.Position
@@ -276,6 +297,8 @@ function FollowerNPC:_checkPathAheadWalkable(plrRoot)
 	if horizontalDist <= 0.1 then return true end
 
 	local dir = (flatTarget - flatCurrent).Unit
+	
+	-- sample multiple points along path towards player to prevent false positive ground reads near cliff edges
 	local sampleDistance = math.min(horizontalDist, self.DISTANCE_START_FOLLOW)
 	local stepSize = 1.5
 	local steps = math.max(math.floor(sampleDistance / stepSize), 1)
@@ -289,18 +312,21 @@ function FollowerNPC:_checkPathAheadWalkable(plrRoot)
 		local rayResult = workspace:Raycast(rayOrigin, Vector3.new(0, -self.DEEP_FALL_RAY_LENGTH, 0), raycastParams)
 
 		if not rayResult then
-			return false
+			return false -- void detected along path
 		end
 
 		local dropDepth = currentPos.Y - rayResult.Position.Y
 		if dropDepth > self.MAX_SAFE_FALL_DEPTH then
-			return false
+			return false -- deep fall detected along path
 		end
 	end
 
 	return true
 end
 
+-- Executes the delayed teleport sequence with double-check verification and fade animations
+-- targetPos - player root position
+-- reason    - "OutOfRange" or "VoidOrDeepFall"
 function FollowerNPC:_triggerTeleportSequence(plrRoot, targetPos, reason)
 	if self.isTeleporting then return end
 	self.isTeleporting = true
@@ -308,9 +334,11 @@ function FollowerNPC:_triggerTeleportSequence(plrRoot, targetPos, reason)
 	self.teleportToken += 1
 	local localToken = self.teleportToken
 
+	-- phase 1: initial 1.5s delay while standing idle
 	self:_setAnimState("Idle", 0.35)
 	task.wait(self.TELEPORT_WAIT_DELAY)
 
+	-- check cancellation condition based on trigger reason
 	if localToken ~= self.teleportToken then
 		return
 	end
@@ -350,6 +378,7 @@ function FollowerNPC:_triggerTeleportSequence(plrRoot, targetPos, reason)
 		end
 	end
 
+	-- phase 2: check if initial safe spot exists behind player
 	local safeCFrame = self:_getSafeTeleportCFrame(plrRoot, targetPos)
 	if not safeCFrame then
 		self.isTeleporting = false
@@ -357,12 +386,14 @@ function FollowerNPC:_triggerTeleportSequence(plrRoot, targetPos, reason)
 		return
 	end
 
+	-- phase 3: verification delay (0.5s) to ensure target spot is not temporary
 	task.wait(self.VERIFY_SAFE_DELAY)
 
 	if localToken ~= self.teleportToken then
 		return
 	end
 
+	-- re-check cancellation condition after verification delay
 	if reason == "OutOfRange" then
 		local curPlrPos = plrRoot.Position
 		local curDist = self:_getEffectiveDistance(self.rootPart.Position, curPlrPos)
@@ -398,6 +429,7 @@ function FollowerNPC:_triggerTeleportSequence(plrRoot, targetPos, reason)
 		end
 	end
 
+	-- phase 4: re-verify safe spot after verification delay
 	local finalSafeCFrame = self:_getSafeTeleportCFrame(plrRoot, plrRoot.Position)
 	if not finalSafeCFrame then
 		self.isTeleporting = false
@@ -405,6 +437,7 @@ function FollowerNPC:_triggerTeleportSequence(plrRoot, targetPos, reason)
 		return
 	end
 
+	-- phase 5: execute vanish (fade out) -> teleport -> reappear (fade in)
 	self:FadeModelTransparency(1.0, self.FADE_DURATION)
 	if localToken ~= self.teleportToken then
 		self:FadeModelTransparency(0.0, self.FADE_DURATION, true)
@@ -433,6 +466,7 @@ function FollowerNPC:_updateGrounding(dt, targetX, targetZ, overrideRayResult)
 	local targetGroundY = rayResult and (rayResult.Position.Y + self.HIP_HEIGHT) or currentPos.Y
 	local nextY = targetGroundY
 
+	-- gravity fall lerp & land animation at end
 	local yDrop = self.lastYPosition - targetGroundY
 	if yDrop > self.LANDING_DROP_THRESHOLD and not self.isFalling and not self.isLanding then
 		self.isFalling = true
@@ -440,14 +474,17 @@ function FollowerNPC:_updateGrounding(dt, targetX, targetZ, overrideRayResult)
 	end
 
 	if self.isFalling then
+		-- accelerate downward like gravity
 		self.fallVelocity = self.fallVelocity + self.GRAVITY * dt
 		nextY = self.lastYPosition - self.fallVelocity * dt
 
+		-- check if ground reached
 		if nextY <= targetGroundY then
 			nextY = targetGroundY
 			self.isFalling = false
 			self.fallVelocity = 0
 
+			-- play landing animation ONLY at the end upon ground contact
 			self.isLanding = true
 			self.landingTime = 0.35
 			self:_setAnimState("Land", 0.1)
@@ -470,9 +507,11 @@ function FollowerNPC:StartFollowing(getTargetPosition)
 	local plrRoot = char:WaitForChild("HumanoidRootPart", 10)
 	if not plrRoot then return end
 
+	-- exclude player character and npc from ground raycasts
 	raycastParams:AddToFilter(char)
 	raycastParams:AddToFilter(self.rig)
 
+	-- main render loop for client-side follower movement
 	self.renderConn = RS.RenderStepped:Connect(function(dt)
 		if not self.rig or not self.rig.Parent or not char or not char.Parent then
 			self:Stop()
@@ -483,18 +522,21 @@ function FollowerNPC:StartFollowing(getTargetPosition)
 		local targetPos = getPosResult or plrRoot.Position
 		local currentPos = self.rootPart.Position
 
+		-- task 1: calculate horizontal distance with conditional vertical offset threshold
 		local flatCurrent = Vector3.new(currentPos.X, 0, currentPos.Z)
 		local flatTarget = Vector3.new(targetPos.X, 0, targetPos.Z)
 		local horizontalDist = (flatTarget - flatCurrent).Magnitude
 
 		local dist = self:_getEffectiveDistance(currentPos, targetPos)
 
+		-- state update for follow distance threshold
 		if not self.isFollowing and dist > self.DISTANCE_START_FOLLOW then
 			self.isFollowing = true
 		elseif self.isFollowing and dist <= self.DISTANCE_STOP_FOLLOW then
 			self.isFollowing = false
 		end
 
+		-- out of range check: if player moves further than MAX_TELEPORT_RANGE, trigger teleport routine
 		if dist > self.MAX_TELEPORT_RANGE then
 			if not self.isTeleporting then
 				task.spawn(function()
@@ -507,6 +549,7 @@ function FollowerNPC:StartFollowing(getTargetPosition)
 			return
 		end
 
+		-- if teleport is active, hold idle state unless cancellation criteria is met
 		if self.isTeleporting then
 			if self.currentTeleportReason == "OutOfRange" then
 				if dist <= self.MAX_TELEPORT_RANGE then
@@ -566,9 +609,11 @@ function FollowerNPC:StartFollowing(getTargetPosition)
 				return
 			end
 
+			-- calculate move direction on xz plane
 			local dir = (flatTarget - flatCurrent).Unit
 			local moveStep = dir * (self.MOVE_SPEED * dt)
 
+			-- prevent overshooting target
 			if moveStep.Magnitude > horizontalDist then
 				moveStep = dir * horizontalDist
 			end
@@ -578,6 +623,7 @@ function FollowerNPC:StartFollowing(getTargetPosition)
 			local nextX = currentPos.X + moveStep.X
 			local nextZ = currentPos.Z + moveStep.Z
 
+			-- task 3: raycast ahead straight down at proposed position to check for void or deep fall
 			-- original raycast for ground position calculation & hysteresis
 			local aheadRayOrigin = Vector3.new(nextX + (self.isVoidOrDeepFall and (moveStep.X * self.CAUTIOUS_DOUBLE_CHECK_EXTRA_LENGTH) or 0), currentPos.Y + 5, nextZ + (self.isVoidOrDeepFall and (moveStep.Z * self.CAUTIOUS_DOUBLE_CHECK_EXTRA_LENGTH) or 0))
 			local aheadRayResult = workspace:Raycast(aheadRayOrigin, Vector3.new(0, -self.DEEP_FALL_RAY_LENGTH, 0), raycastParams)
@@ -596,6 +642,7 @@ function FollowerNPC:StartFollowing(getTargetPosition)
 			end
 
 			if self.isVoidOrDeepFall then
+				-- void/deep fall detected ahead: trigger delayed teleport routine while remaining idle
 				if not self.isTeleporting then
 					task.spawn(function()
 						self:_triggerTeleportSequence(plrRoot, targetPos, "VoidOrDeepFall")
@@ -607,8 +654,10 @@ function FollowerNPC:StartFollowing(getTargetPosition)
 				return
 			end
 
+			-- safe floor detected ahead
 			local nextY = self:_updateGrounding(dt, nextX, nextZ, aheadRayResult)
 
+			-- walk/run animation blending logic
 			if not self.isFalling and not self.isLanding then
 				if self.hasWalkAnim then
 					if currentSpeed > self.RUN_THRESHOLD then
@@ -638,6 +687,8 @@ function FollowerNPC:StartFollowing(getTargetPosition)
 				local targetCFrame = CFrame.lookAt(nextPos, lookTarget)
 				lerpedRotation = currentCFrame.Rotation:Lerp(targetCFrame.Rotation, math.clamp(self.TURN_SPEED * dt, 0, 1))
 			else
+				-- horizontally on top of / directly under the target — no valid direction
+				-- to face, so just hold whatever rotation we already had this frame
 				lerpedRotation = currentCFrame.Rotation
 			end
 
@@ -645,6 +696,7 @@ function FollowerNPC:StartFollowing(getTargetPosition)
 		else
 			self:_setAnimState("Idle", 0.35)
 
+			-- raycast check to maintain ground position while standing still without rotating
 			local rayOrigin = Vector3.new(currentPos.X, currentPos.Y + 5, currentPos.Z)
 			local rayResult = workspace:Raycast(rayOrigin, Vector3.new(0, -20, 0), raycastParams)
 			if rayResult then
