@@ -233,6 +233,10 @@ local function setupUIs()
 	print("ok")]]--
 
 	script.Parent = playerGUI
+	
+	local SlotSelect = require(script:WaitForChild("SlotSelect"))
+	SlotSelect.setup()
+
 	interactables = require(script:WaitForChild("Interactables"))
 	quests = require(script:WaitForChild("Quests"))
 	regions = require(script:WaitForChild("Regions"))

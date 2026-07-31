@@ -221,8 +221,9 @@ function CameraManager.Initialize(participants, manualCenter)
 	cam.Focus = CFrame.new(CameraManager.CenterPoint)
 	
 	-- Stream in the area around the focal point.
-	plr:RequestStreamAroundAsync(CameraManager.CenterPoint)
-	
+	if workspace.StreamingEnabled then
+		plr:RequestStreamAroundAsync(CameraManager.CenterPoint)
+	end
 	--CameraManager.Circle()
 end
 

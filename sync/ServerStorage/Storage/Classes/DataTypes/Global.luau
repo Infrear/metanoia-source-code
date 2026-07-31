@@ -65,13 +65,12 @@ function Global.new(Player, DataClass, BaseGlobal) -- constructor function.
 
 	-- moved data setting down here
 	MT.BaseData = odm.GlobalFunctions.deepCopy(BaseGlobal);
-	
-	local checkedData = runDataCheck(MT.Data, MT.BaseData)
-	MT.Data = --[[checkedData or]] MT.BaseData
+	MT.Data = MT.Data or MT.BaseData
 	--MT.Player = Player -- this might be problematic later
 	
 	-- changed
 	MT.Changed = Instance.new("BindableEvent")
+	MT.Connections = {}
 	--MT.UIUpdated = Instance.new("BindableEvent")
 
 	function MT:UpdateNPC(NpcName, NewBehavior, NewQuestInfo, Completed) -- update npc next talk data method
@@ -116,7 +115,7 @@ function Global.new(Player, DataClass, BaseGlobal) -- constructor function.
 		-- setup the listener
 		self:UpdateQuest(QuestInfo.Text, questIndex.Listeners[QuestInfo.QuestListener].InitialCheck(Player, self.Data.Quests.Current[QuestInfo.Text], QuestInfo))
 		
-		self.Data.Quests.Current[QuestInfo.Text].ListenerCon = questIndex.Listeners[QuestInfo.QuestListener].Event.Event:Connect(function(...)
+		self.Connections[QuestInfo.Text] = questIndex.Listeners[QuestInfo.QuestListener].Event.Event:Connect(function(...)
 			--print(Player)
 			--print(QuestInfo)
 			--print(...)
@@ -149,8 +148,9 @@ function Global.new(Player, DataClass, BaseGlobal) -- constructor function.
 
 		local NPCSource = self.Data.Quests.Current[QuestText].NPCSource
 
-		if self.Data.Quests.Current[QuestText].ListenerCon then
-			self.Data.Quests.Current[QuestText].ListenerCon:Disconnect()
+		if self.Connections[QuestText] then
+			self.Connections[QuestText]:Disconnect()
+			self.Connections[QuestText] = nil
 		end
 		
 		if Completed ~= false then
@@ -210,11 +210,12 @@ function Global.new(Player, DataClass, BaseGlobal) -- constructor function.
 		if self.UIUpdated then
 			self.UIUpdated:Destroy()
 		end
-		for i, v in pairs(self.Data.Quests.Current) do
-			if v.ListenerCon then
-				v.ListenerCon:Disconnect()
+		for i, v in pairs(self.Connections) do
+			if v then
+				v:Disconnect()
 			end
 		end
+		self.Connections = {}
 		self = nil
 	end
 	

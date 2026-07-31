@@ -132,7 +132,7 @@ function Inventory.new(Player, DataClass, BaseInventory, Gridlocked) -- construc
 
 		--print(self.Data[2])
 		if not self.Data[2] then
-			repeat wait() until self.Data[2]
+			repeat task.wait() until self.Data[2]
 		end
 		if itemInfo[Item] then -- setup ui stuff ahead of time if it actually exists
 			--print(Item)
@@ -240,7 +240,7 @@ function Inventory.new(Player, DataClass, BaseInventory, Gridlocked) -- construc
 
 		
 		if not self.Data[2] then
-			repeat wait() until self.Data[2]
+			repeat task.wait() until self.Data[2]
 			--self.Data[2] = {}
 		end
 
@@ -271,9 +271,11 @@ function Inventory.new(Player, DataClass, BaseInventory, Gridlocked) -- construc
 			end
 			--
 			
-			myData2[Item] = {
-				List = {}
-			}
+			if not myData2[Item] then
+				myData2[Item] = {
+					List = {}
+				}
+			end
 			local newItem = {}
 			newItem.Name = Item
 			newItem.Amount = Amount
@@ -365,7 +367,7 @@ function Inventory.new(Player, DataClass, BaseInventory, Gridlocked) -- construc
 						for i2, v2 in pairs(self.Data[3]) do
 							--print(v)
 							--print(slotObject)
-							if self.Data[2][v2.Path[1]][v2.Path[2]][v2.Path[3]] == list[i] then
+							if v2.Path and self.Data[2][v2.Path[1]][v2.Path[2]][v2.Path[3]] == list[i] then
 								self.Data[3][i2].Path = nil
 								--print(self.Data[3][i])
 							end
@@ -414,7 +416,7 @@ function Inventory.new(Player, DataClass, BaseInventory, Gridlocked) -- construc
 						for i, v in pairs(self.Data[3]) do
 							--print(v)
 							--print(slotObject)
-							if self.Data[2][v.Path[1]][v.Path[2]][v.Path[3]] == self.Data[2][Item].List[SlotIndex] then
+							if v.Path and self.Data[2][v.Path[1]][v.Path[2]][v.Path[3]] == self.Data[2][Item].List[SlotIndex] then
 								self.Data[3][i].Path = nil
 								--print(self.Data[3][i])
 							end
@@ -515,6 +517,14 @@ function Inventory.new(Player, DataClass, BaseInventory, Gridlocked) -- construc
 		local myData = self.Data
 
 		local ogSlotLoc = ogSlotObject.Order
+
+		-- dropped back onto its own slot, nothing to do (comparing Order to Order,
+		-- NOT FromSlotIndex to ToSlotIndex -- FromSlotIndex is a raw List index while
+		-- ToSlotIndex/ogSlotLoc are Order values, so those two are not directly comparable)
+		if ogSlotLoc == ToSlotIndex then
+			return
+		end
+
 		local targetSlotLoc = findSlotWithOrder(self.Data[2][Item].List, ToSlotIndex) -- for merging
 		--print(ogSlotLoc)
 		--print(self.Data[2][Item].List)
@@ -638,7 +648,7 @@ function Inventory.new(Player, DataClass, BaseInventory, Gridlocked) -- construc
 		end
 		
 		if self.Data[1][Item].Durability[SlotIndex] <= 0 then
-			self:RemoveItemSlot(Item, Amount, SlotIndex)
+			self:RemoveItemSlot(Item, 1, SlotIndex)
 		end
 	end
 	

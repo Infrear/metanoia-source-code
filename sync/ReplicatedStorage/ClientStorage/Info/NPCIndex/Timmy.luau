@@ -18,7 +18,10 @@ return {
 			[7] = {
 				Text = "Would you walk with me? It's not far. I promise.",
 				Specialty = "Y/N Quest",	
-				Action = "StartFollowing:StrangeBoyMeetPoint",
+				Action = {
+					Name = "StartFollowing",
+					Parameters = {"StrangeBoyMeetPoint", 3.5}
+				}
 				--Actions = {
 				--	Yes = "Travel Ship Back",
 				--	No = nil

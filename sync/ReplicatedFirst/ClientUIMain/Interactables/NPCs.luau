@@ -760,23 +760,27 @@ function NPCM.runNPC(npcObject, givenDialogue, displayName) -- dialogueName and 
 
 	npcRem:FireServer("start", displayName)
 
-	--local Data = getData:InvokeServer("Global")
+	local Data = nil
+	pcall(function()
+		Data = getData:InvokeServer("Global")
+	end)
+	if not Data then return end
 
-	--local npcData = Data.Data.NPCData
+	local npcData = Data.Data.NPCData
 	local npcType = npcObject and npcObject:GetAttribute("NPCType") or nil
 	local hum = npcObject and npcObject:FindFirstChildOfClass("Humanoid") or nil
 
-	--local questData = Data.Data.Quests
+	local questData = Data.Data.Quests
 	local dilogs = npcInfo.Dialogues
 	local dilog = dilogs.First
 
-	--if displayName then
-	--	if npcType == "Quest" and countDict(questData.Current) >= 2 and (not (npcData[displayName] and (npcData[displayName] ~= "First") and npcData[displayName].QuestSequenceIndex and npcData[displayName].QuestSequenceIndex >= 1)) then
-	--		dilog = dilogs["2manyquests"] or npcIndex.TooManyQuestsDefaultDialouge
-	--	elseif npcData[displayName] then
-	--dilog = dilogs[npcData[displayName].Behavior]
-	--	end
-	--end
+	if displayName then
+		if npcType == "Quest" and countDict(questData.Current) >= 2 and (not (npcData[displayName] and (npcData[displayName] ~= "First") and npcData[displayName].QuestSequenceIndex and npcData[displayName].QuestSequenceIndex >= 1)) then
+			dilog = dilogs["2manyquests"] or npcIndex.TooManyQuestsDefaultDialouge
+		elseif npcData[displayName] then
+			dilog = dilogs[npcData[displayName].Behavior]
+		end
+	end
 
 	local latestV = nil
 	local latestAlt = false
@@ -1055,17 +1059,18 @@ function NPCM.runNPC(npcObject, givenDialogue, displayName) -- dialogueName and 
 							if specialtySub2 == "Quest" and displayName then
 								questRem:FireServer("questRequest", displayName)
 								if v.Action then
-									questRem:FireServer("actionRequest", displayName, v.Action)
-									if npcObject then clientSideNPCActions.Run(v.Action, npcObject) end -- NEW
+									questRem:FireServer("actionRequest", displayName, v.Action.Name, v.Action.Parameters and table.unpack(v.Action.Parameters))
+									if npcObject then clientSideNPCActions.Run(v.Action.Name, npcObject, v.Action.Parameters) end -- NEW
 								end
 							elseif specialtySub2 == "Action" then
 								questRem:FireServer("actionRequest", displayName, v.Action)
-								if npcObject then clientSideNPCActions.Run(v.Action, npcObject) end
+								if npcObject then clientSideNPCActions.Run(v.Action.Name, npcObject, v.Action.Parameters) end
 							elseif specialtySub2 == "ServerAction" then
 								questRem:FireServer(
 									"actionRequest", 
 									displayName or ((typeof(givenDialogue) == 'string' and givenDialogue) or (typeof(givenDialogue) == 'Instance' and givenDialogue.Name)), 
-									v.Action
+									v.Action.Name, 
+									v.Action.Parameters and table.unpack(v.Action.Parameters)
 								)
 							end
 						end

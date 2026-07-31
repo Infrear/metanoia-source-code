@@ -18,10 +18,12 @@ PersonaData.Elements = {
 }
 
 -- Global Functions 
-function PersonaData.new(name, stats, affinities, skills) -- Declaration
+function PersonaData.new(name, stats, affinities, skills, level, exp) -- Declaration
 	local self = setmetatable({}, PersonaData)
 
 	self.Name = name or "Angel"
+	self.Level = level or 1
+	self.Exp = exp or 0
 	self.Stats = stats or {
 		ST = 5, -- strength -> physical damage 
 		MA = 5, -- magic -> elemental damage 
@@ -49,6 +51,44 @@ function PersonaData.new(name, stats, affinities, skills) -- Declaration
 	}
 
 	return self
+end
+
+function PersonaData.fromData(data)
+	if not data then return PersonaData.new() end
+	return PersonaData.new(
+		data.Name,
+		data.Stats,
+		data.Affinities,
+		data.KnownSkills or data.Skills,
+		data.Level,
+		data.Exp
+	)
+end
+
+function PersonaData:Serialize()
+	return {
+		Name = self.Name,
+		Level = self.Level,
+		Exp = self.Exp,
+		Stats = self.Stats,
+		Affinities = self.Affinities,
+		Skills = self.KnownSkills
+	}
+end
+
+function PersonaData:AddExp(amount)
+	self.Exp += amount
+	-- Simple level up logic (e.g. 100 * level exp needed)
+	local expNeeded = self.Level * 100
+	while self.Exp >= expNeeded do
+		self.Exp -= expNeeded
+		self.Level += 1
+		-- Increase a random stat on level up
+		local statKeys = {"ST", "MA", "EN", "AG", "LU"}
+		local randomStat = statKeys[math.random(1, #statKeys)]
+		self.Stats[randomStat] += 1
+		expNeeded = self.Level * 100
+	end
 end
 
 return PersonaData

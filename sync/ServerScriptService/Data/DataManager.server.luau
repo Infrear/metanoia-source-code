@@ -9,6 +9,7 @@ local KEYS = {
 	SOCIAL_STATS_KEY = "SocialStats",
 	CONFIDANTS_KEY = "Confidants",
 	PERSONA_STOCK_KEY = "PersonaStock",
+	BP_KEY = "BattlePoints",
 }
 
 -- Services
@@ -34,6 +35,22 @@ local dataUpdEv = CStorage:WaitForChild("Events"):WaitForChild("Remotes"):WaitFo
 local itemAddedEv = CStorage:WaitForChild("Events"):WaitForChild("Remotes"):WaitForChild("ItemAddedEvent")
 local PlayerData = Importer:ImportScript(Storage:WaitForChild("Classes"):WaitForChild("BaseClasses"):WaitForChild("PlayerData"))
 
+-- Profile / Slot selection events
+local function getOrCreateRemote(parent, name, isFunction)
+	local r = parent:FindFirstChild(name)
+	if not r then
+		r = Instance.new(isFunction and "RemoteFunction" or "RemoteEvent")
+		r.Name = name
+		r.Parent = parent
+	end
+	return r
+end
+local getProfileDataEv = getOrCreateRemote(CStorage.Functions.Remotes, "GetProfileData", true)
+local selectSlotEv = getOrCreateRemote(CStorage.Functions.Remotes, "SelectSlot", true)
+
+local DSS = game:GetService("DataStoreService")
+local ProfileStore = DSS:GetDataStore("PlayerProfiles1.69.93")
+
 -- Local Functions
 function tablesAreEqual(table1, table2)
 	if #table1 ~= #table2 then
@@ -51,31 +68,62 @@ end
 
 -- Connections
 PLRS.PlayerAdded:Connect(function(plr)
-	-- Save class setups passing the player as well as new DataClasses through
+	-- On join, we DON'T initialize PlayerData immediately. 
+	-- We wait for the client to request slots and select one.
+end)
+
+getProfileDataEv.OnServerInvoke = function(plr)
+	-- Fetch the player's profile data (which contains slot metadata)
+	local profileData = nil
+	local success, err = pcall(function()
+		profileData = ProfileStore:GetAsync("Profile_"..plr.UserId)
+	end)
+	if not success then
+		warn("Failed to load profile for "..plr.Name..": "..tostring(err))
+	end
+	
+	-- Return default if empty
+	if not profileData then
+		profileData = {
+			Slots = {
+				["1"] = { Created = false, Playtime = 0, Level = 1 },
+				["2"] = { Created = false, Playtime = 0, Level = 1 },
+				["3"] = { Created = false, Playtime = 0, Level = 1 },
+			},
+			LastPlayedSlot = "1"
+		}
+	end
+	
+	return profileData
+end
+
+selectSlotEv.OnServerInvoke = function(plr, slotId)
+	if odm.PlayerData[plr] then
+		-- Already selected a slot, or re-selecting
+		if odm.PlayerData[plr].Data then
+			odm.PlayerData[plr].Data:SaveData()
+		end
+	end
+	
+	-- Save class setups passing the player and slotId
 	odm.PlayerData[plr] = {
-		Data = PlayerData.new(plr, KEYS),
+		Data = PlayerData.new(plr, KEYS, tostring(slotId)),
 		Update = Instance.new("BindableEvent"),
 	}
-	print(odm.PlayerData[plr].Data)
-	--odm.PlayerData[plr].Data.Inventory:AddItem("Iron", 5) -- starts at 26
+	print("Slot "..tostring(slotId).." selected for "..plr.Name)
+	--print(odm.PlayerData[plr].Data)
 
 	-- Connect changed to inventory
 	odm.PlayerData[plr].Data.Inventory.Changed.Event:Connect(function(item, changed)
-		--print("changed2")
-
 		dataUpdEv:FireClient(plr, "Inventory", item, changed)
-		--print(plr, item, changed)
 		itemAddedEv:FireClient(plr, item, changed)
 		resourceChangedEv:Fire(plr, item, odm.PlayerData[plr].Data.Inventory.Data[1][item].Amount)
 	end)
 
 	odm.PlayerData[plr].Data.Global.Changed.Event:Connect(function(section, changeType, changed1, changed2)
-		--print("changed2")
 		dataUpdEv:FireClient(plr, "Global -"..section, changeType, changed1, changed2)
 	end)
 
-	-- 2. New Persona-Specific Listeners
-	-- These fire to the client so your UI can play animations (like the Calendar flip)
 	odm.PlayerData[plr].Data.Euros.Changed.Event:Connect(function(amtChanged)
 		dataUpdEv:FireClient(plr, "Wallet", "Update", amtChanged, odm.PlayerData[plr].Yen.Data)
 	end)
@@ -96,10 +144,36 @@ PLRS.PlayerAdded:Connect(function(plr)
 		dataUpdEv:FireClient(plr, "PersonaStock", updateType, pDataObj)
 	end)
 	
-	plr.CharacterRemoving:Connect(function(char)
-		odm.PlayerData[plr].Data.Character:UpdateCharacterCFrame(char:GetPivot())
+	-- Note: CharacterRemoving connection is now safely isolated to when they actually have data
+	if not plr:GetAttribute("HasCharacterRemovingConnection") then
+		plr:SetAttribute("HasCharacterRemovingConnection", true)
+		plr.CharacterRemoving:Connect(function(char)
+			if odm.PlayerData[plr] and odm.PlayerData[plr].Data and char:GetPivot() then
+				odm.PlayerData[plr].Data.Character:UpdateCharacterCFrame(char:GetPivot())
+			end
+		end)
+	end
+	
+	-- Update profile metadata (e.g. mark slot as created)
+	pcall(function()
+		ProfileStore:UpdateAsync("Profile_"..plr.UserId, function(oldProfile)
+			local prof = oldProfile or {
+				Slots = {
+					["1"] = { Created = false, Playtime = 0, Level = 1 },
+					["2"] = { Created = false, Playtime = 0, Level = 1 },
+					["3"] = { Created = false, Playtime = 0, Level = 1 },
+				}
+			}
+			prof.LastPlayedSlot = tostring(slotId)
+			if prof.Slots[tostring(slotId)] then
+				prof.Slots[tostring(slotId)].Created = true
+			end
+			return prof
+		end)
 	end)
-end)
+	
+	return true
+end
 
 PLRS.PlayerRemoving:Connect(function(plr)
 	if odm.PlayerData[plr].Data then

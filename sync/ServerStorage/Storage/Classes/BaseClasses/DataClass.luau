@@ -1,16 +1,26 @@
 -- Services
 local DSS = game:GetService("DataStoreService")
-local DS = DSS:GetDataStore("DataStore1.69.93") -- player stuff
-local DSA = DSS:GetDataStore("DataStoreA1.69.40") -- non-player stuff
+
+-- Playtest & Debug Settings
+local DEV_SETTINGS = {
+	DISABLE_DATA_LOADING = true,
+	DISABLE_DATA_SAVING  = true, 
+	DATA_VERSION_SUFFIX  = "1.69.95", 
+}
+
+local DS = DSS:GetDataStore("DataStore" .. DEV_SETTINGS.DATA_VERSION_SUFFIX) -- player stuff
+local DSA = DSS:GetDataStore("DataStoreA" .. DEV_SETTINGS.DATA_VERSION_SUFFIX) -- non-player stuff
 
 -- Initialization
 local DataClass = {}
 DataClass.__index = DataClass
+DataClass.DevSettings = DEV_SETTINGS
 
 -- Public Functions
-function DataClass.new(idSource, key) -- constructor function (with modifications)
+function DataClass.new(idSource, key, slotId) -- constructor function (with modifications)
 	return setmetatable({
 		key = key;
+		SlotId = slotId or "1";
 		Player = typeof(idSource) == "Instance" and idSource or nil;
 		ID = (typeof(idSource) == "string" or typeof(idSource) == "number") and idSource or nil;
 		Data = nil;	
@@ -20,10 +30,18 @@ end
 
 
 function DataClass:LoadData() -- load data method
+	if DEV_SETTINGS.DISABLE_DATA_LOADING then
+		if self.Player then
+			print("(DATA STATUS) -- Data loading disabled via DevSettings")
+		end
+		self.Data = nil
+		return
+	end
+
 	local Data = nil
 	local success, err = pcall(function()
 		if self.Player then
-			Data = DS:GetAsync(self.key..(self.Player.UserId)) -- attempt to load data from store
+			Data = DS:GetAsync(self.key.."_Slot"..self.SlotId.."_"..(self.Player.UserId)) -- attempt to load data from store
 			--print(Data)
 		else
 			Data = DSA:GetAsync(self.key..(tostring(self.ID))) -- attempt to load data from store
@@ -32,46 +50,15 @@ function DataClass:LoadData() -- load data method
 	end)
 	if success then
 		--print(Data)
-		if true or not Data then -- set data inside private method
+		if not Data then -- set data inside private method
 			if self.Player then
 				print("(DATA STATUS) -- No data to load")
 			end
-			--print(self.BaseData)
-			--if self.BaseData then
-			--	Data = self.BaseData
-			--end
-		-- For updating datastores (THIS SHI DONT WORK)
-			--elseif Data and self.key == "Stats" and not Data[2] then
-			--	if self.Player then
-			--		print("(DATA STATUS) -- Resetting data")
-			--	end
-			--	if self.BaseData then
-			--		self.Data = self.BaseData
-			--		oldData = self.BaseData
-			--	end
-		--elseif Data and self.Player and self.key == "Inventory" and (not Data[4] or not Data[4][3]) then
-		--	if self.Player then
-		--		print("(DATA STATUS) -- Resetting data")
-		--	end
-			
-		--	print(Data)
-		--	print(self.BaseData)
-			
-		--	if self.BaseData then
-		--		local modTable = Data
-		--		modTable[4] = self.BaseData[4]
-		--		print(modTable)
-		--		--self.Data = modTable
-		--	end
 		else
 			if self.Player then
 				print("(DATA STATUS) -- Successfully loaded data")
 			end
 			self.Data = Data
-			--print(self.Data)
-			--if self.Player then
-			--	print(Data)
-			--end
 		end
 	elseif err then
 		warn("(DATA STATUS) -- "..err)
@@ -80,10 +67,17 @@ end
 
 
 function DataClass:SaveData() -- save data method
-	--print(self.Data)
+	if DEV_SETTINGS.DISABLE_DATA_SAVING then
+		if self.Player then
+			print("(DATA STATUS) -- Data saving disabled via DevSettings")
+		end
+		self = nil
+		return
+	end
+
 	local success, err = pcall(function()
 		if self.Player then
-			DS:UpdateAsync(self.key..(self.Player.UserId), function(oldData) -- we save data
+			DS:UpdateAsync(self.key.."_Slot"..self.SlotId.."_"..(self.Player.UserId), function(oldData) -- we save data
 				--print(self.Data)
 				return self.Data or oldData
 			end)

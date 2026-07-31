@@ -20,11 +20,20 @@ local sequenceTokens = {}  -- [npcObject] = integer (Workflow 3: Incrementing Se
 local ARRIVAL_DISTANCE = 6
 local ARRIVAL_CHECK_INTERVAL = 0.5
 
-local function hideNPC(npcObject)
+local function hideNPC(npcObject, activationDist)
 	npcObject:SetAttribute("Fakebuild", true) 
 	local npcRoot = npcObject.PrimaryPart
 	local prompt = npcRoot and npcRoot:FindFirstChildOfClass("ProximityPrompt") or npcObject:FindFirstChildOfClass("ProximityPrompt")
-	if prompt then prompt.Enabled = false end
+	if prompt then 
+		if activationDist then
+			if not npcObject:GetAttribute("OGActivationDist") then
+				npcObject:SetAttribute("OgActivationDist", prompt.MaxActivationDistance)
+			end
+			prompt.MaxActivationDistance = activationDist
+		else
+			prompt.Enabled = false		
+		end	
+	end
 
 	-- stop default track animations on animator if playing
 	local animator = npcObject:FindFirstChildOfClass("Animator", true)
@@ -48,7 +57,14 @@ local function showNPC(npcObject)
 	npcObject:SetAttribute("Fakebuild", false)
 	local npcRoot = npcObject.PrimaryPart
 	local prompt = npcRoot and npcRoot:FindFirstChildOfClass("ProximityPrompt") or npcObject:FindFirstChildOfClass("ProximityPrompt")
-	if prompt then prompt.Enabled = true end
+	print(npcObject:GetAttribute("OgActivationDist"))
+	if prompt then 
+		if npcObject:GetAttribute("OGActivationDist") then
+			prompt.MaxActivationDistance = npcObject:GetChildren("OgActivationDist")
+		else
+			prompt.Enabled = true		
+		end	
+	end
 
 	-- restore original transparencies
 	for _, part in ipairs(npcObject:GetDescendants()) do
@@ -77,7 +93,7 @@ Actions["StopFollowing"] = function(npcObject)
 	showNPC(npcObject)
 end
 
-Actions["StartFollowing"] = function(npcObject, destinationName)
+Actions["StartFollowing"] = function(npcObject, destinationName, activationDist)
 	if activeFollowers[npcObject] then return end
 
 	if not destinationName then
@@ -99,7 +115,7 @@ Actions["StartFollowing"] = function(npcObject, destinationName)
 		}
 	})
 
-	hideNPC(npcObject)
+	hideNPC(npcObject, activationDist)
 
 	follower:StartFollowing(function()
 		local myChar = plr.Character or char
@@ -148,12 +164,11 @@ Actions["StartFollowing"] = function(npcObject, destinationName)
 	end)
 end
 
-function ClientSideNPCActions.Run(actionString, npcObject)
-	if not actionString or not npcObject then return end
-	local name, arg = actionString:match("^([^:]+):?(.*)$")
-	local fn = Actions[name]
+function ClientSideNPCActions.Run(actionName, npcObject, extraParams)
+	if not actionName or not npcObject then return end
+	local fn = Actions[actionName]
 	if fn then
-		fn(npcObject, arg ~= "" and arg or nil)
+		fn(npcObject, table.unpack(extraParams))
 	end
 end
 

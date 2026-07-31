@@ -161,10 +161,15 @@ local BASE_GLOBAL = {
 		--	["Behavior"] = "Quest Return 6"
 		--}
 	},
-	Clan = nil
+	Clan = nil,
+	Elo = {
+		Rank = "Bronze",
+		Rating = 1000
+	}
 }
 
 local BASE_EUROS = 5000
+local BASE_BP = 0
 
 -- Dependencies
 local Storage = SS:WaitForChild("Storage")
@@ -177,37 +182,37 @@ local DataClass = Importer:ImportScript(Storage.Classes.BaseClasses.DataClass)
 local PlayerData = {}
 PlayerData.__index = PlayerData 
 
-function PlayerData.new(Player, Keys)
+function PlayerData.new(Player, Keys, slotId)
 	local MT = setmetatable({
 		Player = Player;
+		SlotId = slotId or "1";
 
 		-- 1. CURRENCY (yen or euros?? idk)
-		Euros = Currency.new(Player, DataClass.new(Player, Keys.MONEY_KEY), "Euros", BASE_EUROS);
+		Euros = Currency.new(Player, DataClass.new(Player, Keys.MONEY_KEY, slotId), "Euros", BASE_EUROS);
+		BattlePoints = Currency.new(Player, DataClass.new(Player, Keys.BP_KEY, slotId), "BattlePoints", BASE_BP);
 
 		-- 2. PERSONA CORE SYSTEMS
-		Calendar = DataTypes.Calendar.new(Player, DataClass.new(Player, Keys.CALENDAR_KEY), BASE_CALENDAR);
-		SocialStats = DataTypes.SocialStats.new(Player, DataClass.new(Player, Keys.SOCIAL_STATS_KEY), BASE_SOCIAL_STATS);
-		Confidants = DataTypes.Confidants.new(Player, DataClass.new(Player, Keys.CONFIDANTS_KEY), BASE_CONFIDANTS);
-		PersonaStock = DataTypes.PersonaStock.new(Player, DataClass.new(Player, Keys.PERSONA_STOCK_KEY), BASE_PERSONA_STOCK);
+		Calendar = DataTypes.Calendar.new(Player, DataClass.new(Player, Keys.CALENDAR_KEY, slotId), BASE_CALENDAR);
+		SocialStats = DataTypes.SocialStats.new(Player, DataClass.new(Player, Keys.SOCIAL_STATS_KEY, slotId), BASE_SOCIAL_STATS);
+		Confidants = DataTypes.Confidants.new(Player, DataClass.new(Player, Keys.CONFIDANTS_KEY, slotId), BASE_CONFIDANTS);
+		PersonaStock = DataTypes.PersonaStock.new(Player, DataClass.new(Player, Keys.PERSONA_STOCK_KEY, slotId), BASE_PERSONA_STOCK);
 
 		-- 4. CUSTOMIZATION & GEAR (imma keep these for now), as well as potions and rare stuff probably
-		Character = DataTypes.Character.new(Player, DataClass.new(Player, Keys.CHARACTER_KEY), BASE_CHARACTER);
-		Inventory = DataTypes.Inventory.new(Player, DataClass.new(Player, Keys.INVENTORY_KEY), BASE_INVENTORY);
+		Character = DataTypes.Character.new(Player, DataClass.new(Player, Keys.CHARACTER_KEY, slotId), BASE_CHARACTER);
+		Inventory = DataTypes.Inventory.new(Player, DataClass.new(Player, Keys.INVENTORY_KEY, slotId), BASE_INVENTORY);
 
 		-- 5. STORY & QUEST PERSISTENCE
-		Global = DataTypes.Global.new(Player, DataClass.new(Player, Keys.GLOBAL_KEY), BASE_GLOBAL);
+		Global = DataTypes.Global.new(Player, DataClass.new(Player, Keys.GLOBAL_KEY, slotId), BASE_GLOBAL);
 	}, PlayerData)
 
 	return MT
 end
 
 function PlayerData:SaveData() -- save data 
-	--print(self)
 	for i, saveClass in pairs(self) do
-		--print(typeof(saveClass) == "Instance")
-		if typeof(saveClass) == "Instance" then continue end
-		--print(saveClass)
-		saveClass:SaveData() -- we can call the save data function from the save classes due to inheriting the Data class properties.
+		if typeof(saveClass) == "table" and typeof(saveClass.SaveData) == "function" then
+			saveClass:SaveData()
+		end
 	end
 
 	self = nil

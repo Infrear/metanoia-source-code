@@ -308,24 +308,29 @@ end
 
 function quests.setup()
 
-	for i, v in pairs(box1:GetChildren()) do
-		if v:IsA("Frame") then
-			v.Visible = false
-			v:SetAttribute("Using", false)
+	task.spawn(function()
+		local globalData = nil
+		while not globalData do
+			pcall(function()
+				globalData = getData:InvokeServer("Global")
+			end)
+			if not globalData then task.wait(1) end
 		end
-	end
-	
-	updateQuestUI("Start", getData:InvokeServer("Global").Data.Quests)
-	--frame.BackgroundTransparency = 1
-	
-	--
-	dataUpdEv.OnClientEvent:Connect(function(which, changed1, changed2)
-		if which == "Global -Quests" then
-			--print(which)
-			--print(changed1)
-			--print(changed2)
-			updateQuestUI(changed1, changed2)
+
+		for i, v in pairs(box1:GetChildren()) do
+			if v:IsA("Frame") then
+				v.Visible = false
+				v:SetAttribute("Using", false)
+			end
 		end
+		
+		updateQuestUI("Start", globalData.Data.Quests)
+		
+		dataUpdEv.OnClientEvent:Connect(function(which, changed1, changed2)
+			if which == "Global -Quests" then
+				updateQuestUI(changed1, changed2)
+			end
+		end)
 	end)
 end
 

@@ -61,6 +61,58 @@ local function replicateAction(fightTable, attackerData, targets, skillName, dam
 	end
 end
 
+local function EndBattle(fightTable, victor)
+	for i, plrTab in ipairs(fightTable.PlayersInvolved) do
+		CombatReplicator:FireClient(plrTab.PlayerObject, "endBattle", victor)
+		
+		-- DISTRIBUTE REWARDS
+		if victor == "Players" then
+			local plrData = require(game:GetService("ServerStorage"):WaitForChild("Storage"):WaitForChild("Classes"):WaitForChild("StaticClasses"):WaitForChild("Obi's DS Manager")).PlayerData[plrTab.PlayerObject]
+			if plrData then
+				-- 1. Battle Points (BP)
+				local bpReward = 100 -- Example flat rate, scale later based on enemy level
+				plrData.Data.BattlePoints:Increase(bpReward)
+				
+				-- 2. Persona EXP
+				local expReward = 50 -- Example flat rate
+				local activeP = plrData.Data.PersonaStock:GetActivePersona()
+				if activeP then
+					activeP:AddExp(expReward)
+					plrData.Data.PersonaStock:UpdateActivePersona(activeP)
+				end
+				
+				-- 3. Elo Boost (Simple implementation)
+				if plrData.Data.Global.Data.Elo then
+					plrData.Data.Global.Data.Elo.Rating += 10
+					plrData.Data.Global.Changed:Fire("Global", "EloUpdate", plrData.Data.Global.Data.Elo)
+				end
+			end
+		end
+	end
+end
+
+local function CheckWinCondition(fightTable)
+	local enemiesDead = true
+	for _, f in ipairs(fightTable.EnemyFighters) do
+		if f.HP > 0 then enemiesDead = false break end
+	end
+	
+	local playersDead = true
+	for _, f in ipairs(fightTable.PlayerFighters) do
+		if f.HP > 0 then playersDead = false break end
+	end
+	
+	if enemiesDead then
+		EndBattle(fightTable, "Players")
+		return true
+	elseif playersDead then
+		EndBattle(fightTable, "Enemies")
+		return true
+	end
+	
+	return false
+end
+
 -- Public Functions
 function CombatManager.ExecuteSkill(attacker, targets, skillName, fightTable) -- processes a skill attack
 	local skill = SkillLibrary.GetSkill(skillName)
@@ -166,6 +218,10 @@ function CombatManager.ExecuteSkill(attacker, targets, skillName, fightTable) --
 		replicateAction(fightTable, attacker, targets, skillName, baseDamage, results, oldHealths, kShots, "Skill", true)
 		task.wait((((SkillLibrary.List[skillName].CameraInfo and SkillLibrary.List[skillName].CameraInfo.WindupTime) or combatSettings.WIND_UP_DELAY)/combatSettings.CombatSpeedMultiplier) / fightTable.SpeedMultiplier)
 		task.wait((((SkillLibrary.List[skillName].CameraInfo and SkillLibrary.List[skillName].CameraInfo.CameraTime) or combatSettings.POST_MOVE_DELAY)/combatSettings.CombatSpeedMultiplier) / fightTable.SpeedMultiplier)
+	end
+	
+	if CheckWinCondition(fightTable) then
+		return -- Battle ended
 	end
 	
 	if CRITCOUNTER >= 1 then
