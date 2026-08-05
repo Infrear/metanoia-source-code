@@ -16,6 +16,7 @@ local playerGUI = plr:WaitForChild("PlayerGui")
 local hrp = char:WaitForChild("HumanoidRootPart")
 
 local Storage = RPS:WaitForChild("ClientStorage")
+local CombatReplicator = Storage.Events.Remotes.ReplicateCombat
 local CombatAnims = Storage.Animations.Combat
 local CameraHandler = require(script.Parent.CameraHandler)
 local ScreenHandler = require(script.Parent.ScreenChangeHandler)
@@ -34,6 +35,8 @@ end)
 
 -- Initialization
 local Maestro = {}
+Maestro.BattleReady = false -- flips true once InitiateBattle has fighters cloned/positioned; other
+-- actions' generic fighter-resolution code (in ClientUIMain) waits on this so it can't race ahead
 
 local currentCharacter = "Joker"
 local currentPosTween = nil
@@ -69,8 +72,276 @@ local imageIds = {
 
 local TIS = {
 	["Grow"] = TweenInfo.new(1, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-	["Shrink"] = TweenInfo.new(0.5, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
+	["Shrink"] = TweenInfo.new(0.5, Enum.EasingStyle.Quint, Enum.EasingDirection.In),
+	["Fade"] = TweenInfo.new(0.35, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
 }
+
+-- ===== Summon/Retrieve Mesh FX (Bases + Crests) =====
+-- Grow a Base (e.g. a spinning diamond) and a Crest (e.g. a spinning wing, unique per persona) up to
+-- full size to "materialize" a persona instead of tweening the persona rig's own Size every frame --
+-- that per-frame Model:ScaleTo() was the actual cause of the freeze/lag when personas spawned in.
+local SummonMeshes = Storage.Effects.Combat.SummonMeshes
+local SummonBases = SummonMeshes.Bases
+local SummonCrests = SummonMeshes.Crests
+
+-- TODO: once persona info carries its own base/crest/offset values, read from there instead of these
+-- maps. Personas not listed just fall back to the Diamond base / a plain circle crest / no offset.
+local PersonaCrestMap = {
+	["Angel"] = "Wing",
+}
+local PersonaBaseMap = {}
+-- Raises (or otherwise offsets) the whole mesh FX assembly per persona -- some persona models (e.g.
+-- flying-type ones) have their pivot sitting low relative to where they actually visually read as
+-- "centered", which was spawning the base low into their legs.
+local PersonaSpawnVFXOffset = {
+	["Angel"] = Vector3.new(0, 4, 0),
+}
+
+local function getBaseTemplate(personaName)
+	local mapped = PersonaBaseMap[personaName]
+	return (mapped and SummonBases:FindFirstChild(mapped)) or SummonBases:FindFirstChild("Diamond")
+end
+
+local function getCrestTemplate(personaName)
+	local mapped = PersonaCrestMap[personaName]
+	return mapped and SummonCrests:FindFirstChild(mapped)
+end
+
+local function getSpawnVFXOffset(personaName)
+	return PersonaSpawnVFXOffset[personaName] or Vector3.new(0, 0, 0)
+end
+
+-- Summon VFX modules -- same pattern as SkillLibrary.PreloadedVFXFunctions for attack VFX: every
+-- ModuleScript under SummonVFX gets preloaded and keyed by name, then a persona map (again a stand-in
+-- for real persona info later) picks which one to run, always falling back to "Default" if a persona
+-- doesn't specify one.
+local SummonVFXFolder = Storage.Effects.Combat.SummonVFX
+local PreloadedSummonVFX = {}
+for _, mod in pairs(SummonVFXFolder:GetChildren()) do
+	if mod:IsA("ModuleScript") then
+		PreloadedSummonVFX[mod.Name] = require(mod)
+	end
+end
+
+-- TODO: once persona info carries its own summon VFX name, read from there instead of this map.
+local PersonaSummonVFXMap = {
+	["Angel"] = "VFXTwo", -- example: Angel uses a specific summon VFX instead of the default
+}
+
+local function getSummonVFXFunction(personaName)
+	local mapped = PersonaSummonVFXMap[personaName]
+	return (mapped and PreloadedSummonVFX[mapped]) or PreloadedSummonVFX["Default"]
+end
+
+local function makeFallbackCrest()
+	-- No dedicated crest for this persona yet -- a plain flat disc reads as "circle part" without
+	-- needing a custom mesh asset. Cylinders are authored lengthwise along X, so the caller rotates
+	-- this 90 degrees to lay it flat.
+	local part = Instance.new("Part")
+	part.Shape = Enum.PartType.Cylinder
+	part.Material = Enum.Material.Neon
+	part.Color = Color3.new(1, 1, 1)
+	part.Size = Vector3.new(0.2, 2, 2)
+	return part
+end
+
+-- Spins a part in place around its own Y axis forever, until it's destroyed/unparented. speed can be
+-- a plain number (constant degrees/sec) or a function(elapsedSeconds) -> degrees/sec for a dynamic
+-- rate (negative values spin the opposite direction).
+local function spinIndefinitely(part, speed, pivotCFrame)
+	local angle = 0
+	local elapsed = 0
+	local conn
+	conn = RS.Heartbeat:Connect(function(dt)
+		if not part or not part.Parent then
+			if conn then conn:Disconnect() end
+			return
+		end
+		elapsed += dt
+		local degPerSec = type(speed) == "function" and speed(elapsed) or speed
+		angle += math.rad(degPerSec * dt)
+		part.CFrame = pivotCFrame * CFrame.Angles(0, angle, 0)
+	end)
+	return conn
+end
+
+-- Base spin rate curve: starts fast, ramps up to max speed, then just holds there -- no slow-down,
+-- it stays at max speed straight through the disappear. The crest spins at a fast constant rate in
+-- the opposite direction (negative).
+local BASE_SPIN_RATE = 420
+local BASE_SPIN_PEAK_BOOST = 480 -- max speed bumped up a bit further
+local BASE_SPIN_RAMP_DURATION = 0.65 -- time to reach max; holds at max forever after this
+local BASE_SPIN_MAX = BASE_SPIN_RATE + BASE_SPIN_PEAK_BOOST
+local function baseSpinCurve(elapsed)
+	if elapsed >= BASE_SPIN_RAMP_DURATION then
+		return BASE_SPIN_MAX
+	end
+	local t = elapsed / BASE_SPIN_RAMP_DURATION
+	return BASE_SPIN_RATE + BASE_SPIN_PEAK_BOOST * math.sin(t * (math.pi / 2))
+end
+local CREST_SPIN_RATE = -240
+
+-- Spawns the base+crest pair at spawnCFrame, sized relative to targetSize (usually the persona's own
+-- full-scale extents), already spinning. startFull decides whether they start at full size (for
+-- retrieve, which fades in) or tiny (for summon, which grows in). Returns a handle table used by the
+-- grow/fade/shrink helpers below.
+local function spawnSummonMeshFX(personaName, spawnCFrame, targetSize, startFull)
+	spawnCFrame = spawnCFrame + getSpawnVFXOffset(personaName)
+
+	local baseTemplate = getBaseTemplate(personaName)
+	local crestTemplate = getCrestTemplate(personaName)
+	local isFallbackCrest = not crestTemplate
+
+	local handle = {}
+
+	if baseTemplate then
+		local base = baseTemplate:Clone()
+		local diameter = math.max(targetSize.X, targetSize.Z) * 1.15
+		local scaleFactor = diameter / math.max(baseTemplate.Size.X, baseTemplate.Size.Z)
+		local finalSize = baseTemplate.Size * scaleFactor
+
+		base.Anchored = true
+		base.CanCollide = false
+		base.CanQuery = false
+		base.CanTouch = false
+		base.Transparency = 0
+		base.Size = startFull and finalSize or (finalSize * 0.01)
+		base.Parent = workspace.PERSONAS
+
+		handle.Base = base
+		handle.BaseFinalSize = finalSize
+		handle.BaseSpin = spinIndefinitely(base, baseSpinCurve, spawnCFrame)
+	end
+
+	local crest = crestTemplate and crestTemplate:Clone() or makeFallbackCrest()
+	if crest then
+		local diameter = math.max(targetSize.X, targetSize.Z) * 0.65
+		local scaleFactor = diameter / math.max(crest.Size.X, crest.Size.Z)
+		local finalSize = crest.Size * scaleFactor
+		local crestCFrame = spawnCFrame * CFrame.new(0, targetSize.Y * 0.55, 0)
+		if isFallbackCrest then
+			crestCFrame = crestCFrame * CFrame.Angles(0, 0, math.rad(90))
+		end
+
+		crest.Anchored = true
+		crest.CanCollide = false
+		crest.CanQuery = false
+		crest.CanTouch = false
+		crest.Transparency = 0
+		crest.Size = startFull and finalSize or (finalSize * 0.01)
+		crest.Parent = workspace.PERSONAS
+
+		handle.Crest = crest
+		handle.CrestFinalSize = finalSize
+		-- fast constant rate, opposite direction from the base's curve
+		handle.CrestSpin = spinIndefinitely(crest, CREST_SPIN_RATE, crestCFrame)
+	end
+
+	return handle
+end
+
+-- Grows the base+crest from tiny up to full size (blocking -- waits for it to finish)
+local function growSummonMeshFX(handle, tweenInfo)
+	local tweens = {}
+	if handle.Base then table.insert(tweens, TS:Create(handle.Base, tweenInfo, {Size = handle.BaseFinalSize})) end
+	if handle.Crest then table.insert(tweens, TS:Create(handle.Crest, tweenInfo, {Size = handle.CrestFinalSize})) end
+	for _, t in ipairs(tweens) do t:Play() end
+	if tweens[1] then tweens[1].Completed:Wait() end
+end
+
+-- Fades the base+crest transparency in from invisible to visible (blocking)
+local function fadeInSummonMeshFX(handle, tweenInfo)
+	local tweens = {}
+	if handle.Base then
+		handle.Base.Transparency = 1
+		table.insert(tweens, TS:Create(handle.Base, tweenInfo, {Transparency = 0}))
+	end
+	if handle.Crest then
+		handle.Crest.Transparency = 1
+		table.insert(tweens, TS:Create(handle.Crest, tweenInfo, {Transparency = 0}))
+	end
+	for _, t in ipairs(tweens) do t:Play() end
+	if tweens[1] then tweens[1].Completed:Wait() end
+end
+
+-- The crest's disappearing beat: a fast, snappy shrink down to almost nothing, then an explosive burst
+-- out past its normal size while fading to invisible. Used identically every time the crest
+-- disappears -- whether summon just finished or retrieve just finished -- unlike the base, this never
+-- reverses direction.
+local function burstDisappearCrestFX(crest, crestFinalSize, spinConn)
+	if not crest then return end
+	-- Fast, hard snap down to almost nothing, then a burst back out to its normal explosion size --
+	-- but the transparency fade runs slower/separately so it lingers a beat after the size settles
+	local snapDownInfo = TweenInfo.new(0.09, Enum.EasingStyle.Exponential, Enum.EasingDirection.In)
+	local burstSizeInfo = TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	local burstFadeInfo = TweenInfo.new(0.5, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
+
+	local snapTween = TS:Create(crest, snapDownInfo, {Size = crestFinalSize * 0.02})
+	snapTween:Play()
+	snapTween.Completed:Wait()
+
+	local burstSizeTween = TS:Create(crest, burstSizeInfo, {Size = crestFinalSize * 1.8})
+	local burstFadeTween = TS:Create(crest, burstFadeInfo, {Transparency = 1})
+	burstSizeTween:Play()
+	burstFadeTween:Play()
+	burstFadeTween.Completed:Wait()
+
+	if spinConn then spinConn:Disconnect() end
+	crest:Destroy()
+end
+
+-- Fades the base's transparency out at its current size (used once the persona's already revealed),
+-- and runs the crest's burst-disappear at the same time, then cleans both up
+local function fadeOutSummonMeshFX(handle, tweenInfo)
+	local baseDone = not handle.Base
+	if handle.Base then
+		local baseTween = TS:Create(handle.Base, tweenInfo, {Transparency = 1})
+		baseTween:Play()
+		coroutine.wrap(function()
+			baseTween.Completed:Wait()
+			if handle.BaseSpin then handle.BaseSpin:Disconnect() end
+			handle.Base:Destroy()
+			baseDone = true
+		end)()
+	end
+
+	local crestDone = not handle.Crest
+	if handle.Crest then
+		coroutine.wrap(function()
+			burstDisappearCrestFX(handle.Crest, handle.CrestFinalSize, handle.CrestSpin)
+			crestDone = true
+		end)()
+	end
+
+	repeat task.wait() until baseDone and crestDone
+end
+
+-- Shrinks the base back down to tiny (the reverse of its grow-in), and runs the crest's
+-- burst-disappear at the same time (not reversed -- the crest's disappear is always the same), then
+-- cleans both up
+local function shrinkOutSummonMeshFX(handle, tweenInfo)
+	local baseDone = not handle.Base
+	if handle.Base then
+		local baseTween = TS:Create(handle.Base, tweenInfo, {Size = handle.BaseFinalSize * 0.01})
+		baseTween:Play()
+		coroutine.wrap(function()
+			baseTween.Completed:Wait()
+			if handle.BaseSpin then handle.BaseSpin:Disconnect() end
+			handle.Base:Destroy()
+			baseDone = true
+		end)()
+	end
+
+	local crestDone = not handle.Crest
+	if handle.Crest then
+		coroutine.wrap(function()
+			burstDisappearCrestFX(handle.Crest, handle.CrestFinalSize, handle.CrestSpin)
+			crestDone = true
+		end)()
+	end
+
+	repeat task.wait() until baseDone and crestDone
+end
 
 -- PRELOADED ANIMATION STORAGE
 local PreloadedAnims = {
@@ -270,15 +541,40 @@ function Maestro.Init(char, camRig, allFighters)
 					track:Stop(0)
 				end
 				
-				local animFolder = (v.ModelName and CombatAnims.Characters:FindFirstChild(v.ModelName)) or CombatAnims.Characters:FindFirstChild(v.Instance.Name) or CombatAnims.Characters.Joker
-				
-				for _, anim in pairs(animFolder:GetChildren()) do
-					if anim:IsA("Animation") then
-						PreloadedAnims.Characters[v.Instance].CharacterAnims[anim.Name] = tAnimator:LoadAnimation(anim)
+				local animFolder
+				if v.IsWildPersona then
+					-- Wild Personas are their own trainer -- they never had a "Character" to begin with,
+					-- so their anims live under CombatAnims.Personas, not .Characters. Looking in
+					-- .Characters (the old behavior) is exactly why Golem's anims never loaded.
+					animFolder = (v.ModelName and CombatAnims.Personas:FindFirstChild(v.ModelName)) or CombatAnims.Personas:FindFirstChild(v.Instance.Name)
+					if not animFolder then
+						warn("[Maestro] no CombatAnims.Personas folder found for wild persona '" .. tostring(v.ModelName or v.Instance.Name) .. "'")
+					end
+				else
+					animFolder = (v.ModelName and CombatAnims.Characters:FindFirstChild(v.ModelName)) or CombatAnims.Characters:FindFirstChild(v.Instance.Name)
+					if not animFolder then
+						-- only fall back to Joker's animations if this fighter actually has a compatible
+						-- humanoid rig -- forcing Joker's anims onto a differently-shaped custom rig (like Golem)
+						-- just fails/glitches since the keyframe bone names won't match
+						if v.Instance:FindFirstChildOfClass("Humanoid") then
+							animFolder = CombatAnims.Characters.Joker
+						else
+							warn("[Maestro] no combat animation folder found for '" .. tostring(v.ModelName or v.Instance.Name) .. "' and it isn't a humanoid rig -- add a CombatAnims.Characters folder for it instead of relying on fallback")
+						end
 					end
 				end
 
-				playAnim(tAnimator, PreloadedAnims.Characters[v.Instance].CharacterAnims["Fight Idle"], 0.2, false)
+				if animFolder then
+					for _, anim in pairs(animFolder:GetChildren()) do
+						if anim:IsA("Animation") then
+							PreloadedAnims.Characters[v.Instance].CharacterAnims[anim.Name] = tAnimator:LoadAnimation(anim)
+						end
+					end
+				end
+
+				-- Wild Personas name their idle anim "Idle" (persona-naming convention); Characters use "Fight Idle"
+				local idleKey = v.IsWildPersona and "Idle" or "Fight Idle"
+				playAnim(tAnimator, PreloadedAnims.Characters[v.Instance].CharacterAnims[idleKey], 0.2, false)
 			end	
 		else
 			PreloadedAnims.Characters[v.Instance] = {}
@@ -290,6 +586,34 @@ function Maestro.Init(char, camRig, allFighters)
 				for _, anim in pairs(CombatAnims.Characters[currentCharacter]:GetChildren()) do
 					if anim:IsA("Animation") then
 						PreloadedAnims.Characters[v.Instance].CharacterAnims[anim.Name] = charAnimator:LoadAnimation(anim)
+					end
+				end
+
+				-- Pre-stage the player's bonded persona hidden inside them while the screen's still
+				-- covered, same trick as the enemy/NPC fighters above -- so the FIRST time they open
+				-- the persona menu (SummonPersona) there's no Clone()/LoadAnimation cost left to pay,
+				-- just a pivot + scale-up.
+				local personaName = (v.ActivePersona and v.ActivePersona.Name) or "Angel"
+				if Storage.Personas:FindFirstChild(personaName) and CombatAnims.Personas:FindFirstChild(personaName) then
+					local personaModel = Storage.Personas:FindFirstChild(personaName):Clone()
+					local pum = personaModel:FindFirstChildOfClass("Humanoid") or personaModel:FindFirstChildOfClass("AnimationController")
+					local pAnimator = pum and pum:FindFirstChildOfClass("Animator")
+
+					if pAnimator then
+						personaModel.Parent = workspace.PERSONAS
+						personaModel:PivotTo(v.Instance:GetPivot())
+						personaModel:ScaleTo(0.01)
+
+						PreloadedAnims.Characters[v.Instance].Personas = PreloadedAnims.Characters[v.Instance].Personas or {}
+						PreloadedAnims.Characters[v.Instance].Personas[personaModel] = {}
+						for _, anim in pairs(CombatAnims.Personas[personaName]:GetChildren()) do
+							if anim:IsA("Animation") then
+								PreloadedAnims.Characters[v.Instance].Personas[personaModel][anim.Name] = pAnimator:LoadAnimation(anim)
+							end
+						end
+
+						PreloadedAnims.Characters[v.Instance].StashedPersonas = PreloadedAnims.Characters[v.Instance].StashedPersonas or {}
+						PreloadedAnims.Characters[v.Instance].StashedPersonas[personaName] = personaModel
 					end
 				end
 			end
@@ -308,24 +632,48 @@ function Maestro.PlayEntranceAnimations(camRig, allFighters)
 	local rigAnimator = camRig:WaitForChild("AnimationController"):WaitForChild("Animator")
 	local rigTrack = playAnim(rigAnimator, PreloadedAnims.Camera["Walk In Fight"])
 	local stopped = false
-	
+
+	-- NPC allies (Timmy etc.) and enemy persona users summon their persona ONCE here, right after
+	-- their walk-in, and then leave it out for the rest of the fight -- no per-attack summon/retrieve
+	-- cinematic like the player gets. Wild Personas (Golem etc.) and the player are excluded: wild
+	-- personas ARE the persona (nothing to summon), and the player controls their own summon/retrieve.
+	local function isAutoSummonFighter(fighter)
+		return fighter.ActivePersona and not fighter.IsWildPersona and fighter.Instance ~= char and not PLRS:GetPlayerFromCharacter(fighter.Instance)
+	end
+
 	for _, fighter in pairs(allFighters) do
 		local fighterChar = fighter.Instance
 		local animator = (fighterChar:FindFirstChildOfClass("Humanoid") and fighterChar:FindFirstChildOfClass("Humanoid"):FindFirstChildOfClass("Animator")) or fighterChar:FindFirstChildOfClass("AnimationController") and fighterChar:FindFirstChildOfClass("AnimationController"):FindFirstChildOfClass("Animator")
-		if animator and PreloadedAnims.Characters[fighterChar] and PreloadedAnims.Characters[fighterChar].CharacterAnims["Walk In Fight"] then
-			local charTrack = playAnim(animator, PreloadedAnims.Characters[fighterChar].CharacterAnims["Walk In Fight"])
+		local anims = PreloadedAnims.Characters[fighterChar] and PreloadedAnims.Characters[fighterChar].CharacterAnims
+
+		if animator and anims and anims["Walk In Fight"] then
+			local charTrack = playAnim(animator, anims["Walk In Fight"])
 			if charTrack then
 				charTrack.Stopped:Once(function()
-					charTrack:Play(0, 1, 0)
-					charTrack.TimePosition = charTrack.Length - .000001
-					if PreloadedAnims.Characters[fighterChar].CharacterAnims["Fight Idle"] then
-						playAnim(animator, PreloadedAnims.Characters[fighterChar].CharacterAnims["Fight Idle"], 0.1, true)
+					-- just transition straight to idle (or the auto-summon) -- no need to freeze/replay
+					-- the walk-in track first, that hack held the walk-in track at weight 1 forever
+					-- since speed 0 means it never actually finishes and clears itself
+					if isAutoSummonFighter(fighter) then
+						Maestro.SummonPersona(fighterChar, fighter.ActivePersona.Name)
+					elseif anims["Fight Idle"] then
+						playAnim(animator, anims["Fight Idle"], 0.15, true)
 					end
 				end)
 			end
-		elseif animator and PreloadedAnims.Characters[fighterChar] and PreloadedAnims.Characters[fighterChar].CharacterAnims["Fight Idle"] then
-			-- Fallback to idle if no walk-in animation (for golems etc.)
-			playAnim(animator, PreloadedAnims.Characters[fighterChar].CharacterAnims["Fight Idle"], 0.1, true)
+		elseif animator and anims and fighter.IsWildPersona and anims["Summoned"] then
+			-- Wild Personas have no dedicated walk-in clip -- reuse their "Summoned" animation (the
+			-- same clip used later if this persona gets bonded to a user) as an entrance fallback
+			local summonTrack = playAnim(animator, anims["Summoned"])
+			if summonTrack then
+				summonTrack.Stopped:Once(function()
+					if anims["Idle"] then
+						playAnim(animator, anims["Idle"], 0.15, true)
+					end
+				end)
+			end
+		elseif animator and anims and (anims["Fight Idle"] or anims["Idle"]) then
+			-- Straight to idle if nothing else is available
+			playAnim(animator, anims["Fight Idle"] or anims["Idle"], 0.1, true)
 		end
 	end
 	
@@ -338,48 +686,123 @@ function Maestro.PlayEntranceAnimations(camRig, allFighters)
 		stopped = true
 	end
 	repeat task.wait() until stopped
+	print("stopped")
 end
 
-function Maestro.InitiateBattle(char, camRig, allFighters, spawnPos)
-	-- 1. Load the "tuff" transition
-	ScreenHandler.LoadIn("Scrub", true) 
+function Maestro.InitiateBattle(char, camRig, fightTable, spawnPos, LocalFightersMap, LocalClonedFighters)
+	Maestro.BattleReady = false
+
+	-- 0. Pokemon-style intro punch, THEN cover the screen with the scrub transition, THEN give it a
+	-- couple seconds to fully settle -- everything from here down (cloning fighters in, loading their
+	-- animations) happens behind the covered screen, same as how the cutscenes hide their setup.
+	coroutine.wrap(function()
+		CameraHandler.BattleIntroPunch()
+	end)()
+	ScreenHandler.LoadIn("Scrub", true)
+	task.wait(0.5)
+
+	-- 1. Clone every fighter in behind the covered screen (moved here from ClientUIMain so this whole
+	-- sequence -- punch, cover, clone, load anims, reveal -- is owned in one place with one clear order)
+	for _, f in ipairs(fightTable.AllFighters) do
+		if not f.Instance then
+			if not LocalFightersMap[f.ID] then
+				local existing = workspace.NPCS:FindFirstChild(f.ModelName)
+				if existing then
+					LocalFightersMap[f.ID] = existing
+				else
+					local template = Storage.Personas:FindFirstChild(f.ModelName) or Storage.NPCs:FindFirstChild(f.ModelName)
+					local newInst = template and template:Clone() or Instance.new("Model")
+					newInst.Name = "Enemy_" .. (f.ModelName or "Unknown")
+					newInst.Parent = workspace.PERSONAS
+					LocalFightersMap[f.ID] = newInst
+					table.insert(LocalClonedFighters, newInst)
+				end
+
+				if f.SpawnCFrame then
+					LocalFightersMap[f.ID]:PivotTo(f.SpawnCFrame)
+				end
+			end
+			f.Instance = LocalFightersMap[f.ID]
+		end
+	end
+	if fightTable.PlayerFighters then
+		for _, f in ipairs(fightTable.PlayerFighters) do
+			if not f.Instance then f.Instance = LocalFightersMap[f.ID] end
+		end
+	end
+	if fightTable.EnemyFighters then
+		for _, f in ipairs(fightTable.EnemyFighters) do
+			if not f.Instance then f.Instance = LocalFightersMap[f.ID] end
+		end
+	end
+
+	local allFighters = fightTable.AllFighters
+
 	AnimationManager2.ToggleAllOverworldAnims:Invoke(false)
-	
-	-- Initialize the animations here
+
+	-- 2. Make sure animations are loaded
 	Maestro.Init(char, camRig, allFighters)
-	task.wait(0.2)
+
+	-- Camera centering needs real fighter positions, which only exist now that they're cloned in
+	CameraHandler.Initialize(allFighters)
 
 	-- Start following the rig camera
 	CameraHandler.CurrentMode = "Cutscene"
 	CameraHandler.SetToRig(camRig)
 
-	-- 2. Setup positions while screen is obscured
+	-- 3. Setup positions while screen is still obscured
 	char:PivotTo(spawnPos)
 	camRig:PivotTo(spawnPos)
 
-	task.wait(0.3)
-
-
 	charAnimator = char:WaitForChild("Humanoid"):WaitForChild("Animator")
 
+	-- Fighters are cloned in and positioned as of here -- safe for other actions' generic
+	-- fighter-resolution block (in ClientUIMain) to stop waiting and proceed. That block was racing
+	-- ahead of this function before (since it runs in its own coroutine per RemoteEvent firing), which
+	-- is what left fighters like Timmy claimed-but-not-positioned in LocalFightersMap.
+	Maestro.BattleReady = true
 
+	task.wait(0.5)
+	print("loaded out")
+	ScreenHandler.LoadOut()
 
 	coroutine.wrap(function()
-		task.wait(0.1)
-		ScreenHandler.LoadOut()
+		print("playing")
 		Maestro.PlayEntranceAnimations(camRig, allFighters)
+		-- Tell the server the entrance sequence (cloning, animation loading, camera walk-in) is
+		-- actually done, instead of it guessing a fixed wait time -- that guess was too short
+		-- whenever this fight had more/heavier stuff to load, so turnStartUpdate would fire and
+		-- CameraHandler.FocusOn would cut the walk-in camera off mid-play.
+		CombatReplicator:FireServer("entranceComplete")
 	end)()
 end
 
 function Maestro.SummonPersona(chara, personaName)
 	if not Storage.Personas:FindFirstChild(personaName) or not CombatAnims.Personas:FindFirstChild(personaName) then return end
+
+	-- Already summoned and visible (player reopened the persona menu without ever retrieving it) --
+	-- there's nothing to animate, just make sure it's still near the character in case they moved,
+	-- and skip the shrink/regrow + summon animation replay entirely.
+	if PreloadedAnims.Characters[chara].CurrentPersona and PreloadedAnims.Characters[chara].CurrentPersona.Name == personaName and PreloadedAnims.Characters[chara].CurrentPersona.Parent == workspace.PERSONAS then
+		PreloadedAnims.Characters[chara].CurrentPersona:PivotTo(chara:GetPivot() * CFrame.new(-3, 2, 2))
+		return
+	end
+
 	ev:Fire()
 	local interuppted = false
 	local con = ev.Event:Once(function()
 		interuppted = true
 	end)
 
-	local personaModel = (PreloadedAnims.Characters[chara].CurrentPersona and PreloadedAnims.Characters[chara].CurrentPersona.Name == personaName) and PreloadedAnims.Characters[chara].CurrentPersona or Storage.Personas:FindFirstChild(personaName):Clone()
+	-- Reuse a stashed (previously retrieved, kept alive) model if we have one -- avoids re-cloning a
+	-- full rig and re-loading all its animations from scratch every time the persona menu is reopened,
+	-- which was a big chunk of the reopen-menu lag on top of the ScaleTo cost.
+	local personaModel = PreloadedAnims.Characters[chara].StashedPersonas and PreloadedAnims.Characters[chara].StashedPersonas[personaName]
+	if personaModel then
+		PreloadedAnims.Characters[chara].StashedPersonas[personaName] = nil
+	else
+		personaModel = Storage.Personas:FindFirstChild(personaName):Clone()
+	end
 	local animFolder = CombatAnims.Personas:FindFirstChild(personaName)
 
 	local chum, pum = (chara:FindFirstChildOfClass("Humanoid") or chara:FindFirstChildOfClass("AnimationController")), (personaModel:FindFirstChildOfClass("Humanoid") or personaModel:FindFirstChildOfClass("AnimationController"))
@@ -403,8 +826,27 @@ function Maestro.SummonPersona(chara, personaName)
 			end
 		end
 	end
-	personaModel:PivotTo(chara:GetPivot() * CFrame.new(-3, 2, 2))
+	local spawnCFrame = chara:GetPivot() * CFrame.new(-3, 2, 2)
+	personaModel:PivotTo(spawnCFrame)
+
+	-- Measure the persona's real, full-scale size (regardless of whatever scale it happened to be at
+	-- from a previous stash) so the mesh FX can be sized to match, then keep the rig itself hidden and
+	-- tiny -- the base+crest mesh FX does the "materializing" visual instead of tweening the rig
+	personaModel:ScaleTo(1)
+	local targetSize = personaModel:GetExtentsSize()
 	personaModel:ScaleTo(0.01)
+
+	local meshFX = spawnSummonMeshFX(personaName, spawnCFrame, targetSize, false)
+
+	-- Run this persona's summon VFX module (or the fallback) alongside the mesh FX. Wrapped in pcall
+	-- since these are effect modules that could error without needing to break the whole summon.
+	local summonVFXFn = getSummonVFXFunction(personaName)
+	if summonVFXFn then
+		local vfxOk, vfxErr = pcall(summonVFXFn, spawnCFrame, personaModel, targetSize, TIS.Grow.Time)
+		if not vfxOk then
+			warn("[Maestro] summon VFX error for '" .. personaName .. "': " .. tostring(vfxErr))
+		end
+	end
 
 	local hl = Highlights.SpawnHighlight(PreloadedAnims.Characters[chara].CurrentPersona, {
 		Enabled = false,
@@ -417,31 +859,45 @@ function Maestro.SummonPersona(chara, personaName)
 
 	hl.Enabled = true
 
-	local TE = nil
+	local TE1 = nil
 	if hl then
 		TE1 = TS:Create(hl, AnimsManager.STIS[3], {FillTransparency = 1, OutlineTransparency = 1})
 		TE1:Play()
 	end
 
-	local con1
 	if hl then
-		con1 = TE1.Completed:Once(function()
+		TE1.Completed:Once(function()
 			hl:Destroy()
 		end)
 	end
 
 	-- 2. Play Synced Summoning
 	local charSummon = playAnim(charAnimator, PreloadedAnims.Characters[chara].CharacterAnims["Summon Persona"])
-	local TE = tweenModelSize(personaModel, TIS.Grow, 1)
 
 	charSummon.Stopped:Once(function()
 		if interuppted then return end
-		playAnim(charAnimator, PreloadedAnims.Characters[chara].CharacterAnims["Summoned Persona Idle"], 0.2, false)
+		local idleAnim = PreloadedAnims.Characters[chara].CharacterAnims["Summoned Persona Idle"] or PreloadedAnims.Characters[chara].CharacterAnims["Fight Idle"]
+		playAnim(charAnimator, idleAnim, 0.2, false)
 	end)
 
 	playAnim(pAnimator, PreloadedAnims.Characters[chara].Personas[personaModel]["Idle"])
 
-	if con then con:Disconnect() end
+	coroutine.wrap(function()
+		-- Grow the mesh FX to full size, then reveal the real persona at full scale (a single instant
+		-- ScaleTo, not tweened), then fade the mesh FX away to unveil it
+		growSummonMeshFX(meshFX, TIS.Grow)
+
+		if interuppted then
+			fadeOutSummonMeshFX(meshFX, TIS.Fade)
+			if con then con:Disconnect() end
+			return
+		end
+
+		personaModel:ScaleTo(1)
+		fadeOutSummonMeshFX(meshFX, TIS.Fade)
+
+		if con then con:Disconnect() end
+	end)()
 end
 
 function Maestro.RetrievePersona(chara)
@@ -454,8 +910,10 @@ function Maestro.RetrievePersona(chara)
 
 	local charAnimator = chara.Humanoid.Animator
 
+	local retrievingPersona = PreloadedAnims.Characters[chara].CurrentPersona
+
 	coroutine.wrap(function()
-		local hl = Highlights.SpawnHighlight(PreloadedAnims.Characters[chara].CurrentPersona, {
+		local hl = Highlights.SpawnHighlight(retrievingPersona, {
 			Enabled = false,
 			FillColor = Color3.new(1, 1, 1),
 			OutlineColor = Color3.new(1, 1, 1),
@@ -479,15 +937,40 @@ function Maestro.RetrievePersona(chara)
 			end)
 		end
 
-		local TE = tweenModelSize(PreloadedAnims.Characters[chara].CurrentPersona, TIS.Shrink, 0.01)
-		TE.Completed:Wait()
+		-- Mirror of the summon FX: fade the mesh pair IN (at full size) to cover the persona, hide
+		-- the persona instantly while it's covered (a single instant ScaleTo, not a tweened one), then
+		-- shrink the mesh pair back down and clean it up -- the persona rig itself never needs an
+		-- animated scale-down at all.
+		local retrieveCFrame = retrievingPersona:GetPivot()
+		local targetSize = retrievingPersona:GetExtentsSize()
+		local meshFX = spawnSummonMeshFX(retrievingPersona.Name, retrieveCFrame, targetSize, true)
+
+		fadeInSummonMeshFX(meshFX, TIS.Fade)
+
+		if interuppted then
+			shrinkOutSummonMeshFX(meshFX, TIS.Shrink)
+			return
+		end
+
+		retrievingPersona:ScaleTo(0.01)
+
+		shrinkOutSummonMeshFX(meshFX, TIS.Shrink)
 
 		if interuppted then return end
 
-		-- Clear persona's preloaded cache since the animator is getting destroyed
-		PreloadedAnims.Characters[chara].Personas[PreloadedAnims.Characters[chara].CurrentPersona.Name] = nil 
+		-- Stash instead of destroying -- keeps the model and its already-loaded animations alive so
+		-- the next SummonPersona for this same persona just pivots it back out instead of re-cloning
+		-- a full rig and re-loading every animation from scratch (that repeated clone/load cycle was
+		-- the biggest chunk of the lag whenever the persona menu got toggled mid-fight).
+		if not PreloadedAnims.Characters[chara].StashedPersonas then
+			PreloadedAnims.Characters[chara].StashedPersonas = {}
+		end
+		PreloadedAnims.Characters[chara].StashedPersonas[retrievingPersona.Name] = retrievingPersona
 
-		PreloadedAnims.Characters[chara].CurrentPersona:Destroy()
+		-- Tuck it inside the persona user rather than below the floor -- "below ground" isn't a safe
+		-- hiding spot for flying scenes, but "wherever the character currently is" always is
+		retrievingPersona:PivotTo(chara:GetPivot())
+
 		PreloadedAnims.Characters[chara].CurrentPersona = nil
 	end)()
 
@@ -502,7 +985,7 @@ function Maestro.RetrievePersona(chara)
 	if con then con:Disconnect() end
 end
 
-function Maestro.CienemateWindUp(char, atktype, fighterData, targets, isEnemy)
+function Maestro.CienemateWindUp(char, atktype, fighterData, targets, isEnemy, speedMult)
 	if isEnemy and (atktype == "Skill" or atktype == "Attack") then --> maybe add like an effect in the lighting here
 		coroutine.wrap(function()
 			task.wait(0.2)
@@ -539,8 +1022,27 @@ function Maestro.CienemateWindUp(char, atktype, fighterData, targets, isEnemy)
 		end)()
 	end
 	if atktype == "Skill" then
-		if fighterData.ActivePersona and --[[PreloadedAnims.Characters[fighterData.Instance].CurrentPersona and]] ((fighterData.Instance == char) or (not PLRS:GetPlayerFromCharacter(fighterData.Instance))) then
-			task.wait(0.6)
+		if fighterData.IsWildPersona then
+			-- Wild Personas attack as themselves -- there's no separate "user" to wind up and no
+			-- summoned persona instance to sync with (that whole flow requires SummonPersona to have
+			-- been called first, which never happens for these). Just play its own Attack1 directly.
+			task.wait(0.6 / (speedMult or 1))
+			local thum = fighterData.Instance:FindFirstChildOfClass("Humanoid") or fighterData.Instance:FindFirstChildOfClass("AnimationController")
+			local tAnimator = thum and thum:FindFirstChildOfClass("Animator")
+			if tAnimator and PreloadedAnims.Characters[fighterData.Instance] then
+				local atk = playAnim(tAnimator, PreloadedAnims.Characters[fighterData.Instance].CharacterAnims["Attack1"])
+				if atk then
+					atk.Stopped:Once(function()
+						playAnim(tAnimator, PreloadedAnims.Characters[fighterData.Instance].CharacterAnims["Idle"], 0.2, false)
+					end)
+				end
+			end
+		elseif fighterData.ActivePersona and --[[PreloadedAnims.Characters[fighterData.Instance].CurrentPersona and]] ((fighterData.Instance == char) or (not PLRS:GetPlayerFromCharacter(fighterData.Instance))) then
+			-- this used to be a flat task.wait(0.6) that never scaled with combat speed, unlike the
+			-- caller's windup wait -- at 2x combat speed the caller would already be moving on to the
+			-- next step before this had even started playing "Use Persona"/"Attack1", which is why
+			-- the attack animation could look like it doesn't play or gets cut off
+			task.wait(0.6 / (speedMult or 1))
 			if fighterData.Instance == char then
 				ev:Fire()
 			end
@@ -554,26 +1056,36 @@ function Maestro.CienemateWindUp(char, atktype, fighterData, targets, isEnemy)
 			local charAttack = playAnim(charAnimator, PreloadedAnims.Characters[fighterData.Instance].CharacterAnims["Use Persona"])
 			
 			local currentPersona = PreloadedAnims.Characters[fighterData.Instance].CurrentPersona
+			-- track the persona's OWN attack track separately so its idle-transition is driven by
+			-- ITS OWN Stopped event, not the character's "Use Persona" gesture finishing. Attack1 is
+			-- usually longer than the caster's gesture, so tying them together was cutting Attack1
+			-- off mid-play every time -- that's the "interrupted mid animation" bug.
+			local personaAttackTrack = nil
 			if currentPersona then
 				local pum = currentPersona:FindFirstChildOfClass("Humanoid") or currentPersona:FindFirstChildOfClass("AnimationController")
 				local pAnimator = pum:FindFirstChildOfClass("Animator")
 				local pAnims = PreloadedAnims.Characters[fighterData.Instance].Personas[currentPersona]
 				if pAnims and pAnims["Attack1"] then
-					playAnim(pAnimator, pAnims["Attack1"], 0.1)
+					personaAttackTrack = playAnim(pAnimator, pAnims["Attack1"], 0.1)
 				end
 			end
 			
 			charAttack.Stopped:Once(function()
 				playAnim(charAnimator, PreloadedAnims.Characters[fighterData.Instance].CharacterAnims["Fight Idle"], 0.2, false)
-				if currentPersona then
-					local pum = currentPersona:FindFirstChildOfClass("Humanoid") or currentPersona:FindFirstChildOfClass("AnimationController")
-					local pAnimator = pum:FindFirstChildOfClass("Animator")
-					local pAnims = PreloadedAnims.Characters[fighterData.Instance].Personas[currentPersona]
-					if pAnims and pAnims["Idle"] then
-						playAnim(pAnimator, pAnims["Idle"], 0.2)
-					end
-				end
 			end)
+
+			if personaAttackTrack then
+				personaAttackTrack.Stopped:Once(function()
+					if currentPersona and currentPersona.Parent then
+						local pum = currentPersona:FindFirstChildOfClass("Humanoid") or currentPersona:FindFirstChildOfClass("AnimationController")
+						local pAnimator = pum:FindFirstChildOfClass("Animator")
+						local pAnims = PreloadedAnims.Characters[fighterData.Instance].Personas[currentPersona]
+						if pAnims and pAnims["Idle"] then
+							playAnim(pAnimator, pAnims["Idle"], 0.2)
+						end
+					end
+				end)
+			end
 		end
 	end
 end
@@ -591,7 +1103,7 @@ function Maestro.CienemateMove(char, atktype, skillName, fighterData, targets)
 end
 
 function Maestro.Cleanup()
-
+	Maestro.BattleReady = false
 end
 
 return Maestro

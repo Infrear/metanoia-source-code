@@ -74,7 +74,7 @@ local TIS = {
 
 local raycastParams = RaycastParams.new()
 raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-raycastParams.FilterDescendantsInstances = {workspace.NPCS, workspace.PERSONAS, workspace.SCRIPTING, workspace.BOUNDS, workspace.CAMERAS, workspace.NPCWALKERS, workspace.CHARACTERS}
+raycastParams.FilterDescendantsInstances = {workspace.NPCS, workspace.PERSONAS, workspace.SCRIPTING, workspace.BOUNDS, workspace.CAMERAS, workspace.NPCWALKERS, workspace.CHARACTERS, workspace.PARTICLES}
 
 -- Local Functions
 local function dictfind(tab, instKey)
@@ -326,7 +326,21 @@ end
 
 -- Connections
 CombatReplicator.OnClientEvent:Connect(function(action, data)
-	if data and data.fightTable then
+	-- On "start", Maestro.InitiateBattle owns the whole sequence (intro punch, transition, cloning
+	-- fighters in, loading animations, reveal) so it can control the order start to finish. For every
+	-- other action, fighters are already cloned/mapped, so this generic block just resolves references.
+	if action ~= "start" and data and data.fightTable then
+		-- If some other action's data arrives while "start" is still mid-sequence (punch/transition/
+		-- cloning inside Maestro.InitiateBattle, which now runs in its own coroutine per firing), wait
+		-- for it to finish instead of racing ahead. That race was the actual bug: this block would
+		-- find/claim a fighter (like Timmy, an existing NPC) in LocalFightersMap first without
+		-- positioning them, then InitiateBattle's own cloning loop would see the ID already claimed
+		-- and skip positioning them entirely -- commenting out the cloning here didn't fix the race,
+		-- it just meant nothing ever positioned them.
+		if not Maestro.BattleReady then
+			repeat task.wait() until Maestro.BattleReady
+		end
+
 		for _, f in ipairs(data.fightTable.AllFighters) do
 			if not f.Instance then
 				if not LocalFightersMap[f.ID] then
@@ -362,6 +376,7 @@ CombatReplicator.OnClientEvent:Connect(function(action, data)
 			end
 		end
 	end
+	
 	if data and data.fighterData and not data.fighterData.Instance then
 		data.fighterData.Instance = LocalFightersMap[data.fighterData.ID]
 	end
@@ -379,14 +394,13 @@ CombatReplicator.OnClientEvent:Connect(function(action, data)
 		thirdPersonCamStuff:Fire(false)
 		local camRig = Storage.Animations.Camera.Rigs.CamRig:Clone()
 		camRig.PrimaryPart.Anchored = true
-		camRig.Parent = workspace
+		camRig.Parent = workspace.SCRIPTING
 		camRig:PivotTo(CFrame.new(0, 0, 0)) -- Start at origin
 		
 		script:SetAttribute("CurrentCamRig", camRig.Name) -- store reference if needed, or just let Maestro handle it
 		_G.CombatCamRig = camRig -- Quick global access for entranceAnimations
 		
-		CameraHandler.Initialize(data.fightTable.AllFighters)
-		Maestro.InitiateBattle(char, camRig, data.fightTable.AllFighters, char:GetPivot())
+		Maestro.InitiateBattle(char, camRig, data.fightTable, char:GetPivot(), LocalFightersMap, LocalClonedFighters)
 		
 	elseif action == "endBattle" then
 		for _, inst in ipairs(LocalClonedFighters) do
@@ -427,7 +441,9 @@ CombatReplicator.OnClientEvent:Connect(function(action, data)
 		if data.windUp then
 			coroutine.wrap(function()
 				local isEnemy = dictfind(data.fightTable.EnemyFighters, data.fighterData.Instance)
-				Maestro.CienemateWindUp(char, data.attackType, data.fighterData, data.targets, isEnemy)
+				-- pass the total effective speed factor through so the windup's internal timing
+				-- (holding the persona's Attack1 anim) actually scales with combat speed too
+				Maestro.CienemateWindUp(char, data.attackType, data.fighterData, data.targets, isEnemy, combatSettings.CombatSpeedMultiplier * speedMult)
 			end)()
 
 			-- Wait for "Attack" windup

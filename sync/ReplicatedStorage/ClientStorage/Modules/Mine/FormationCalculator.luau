@@ -2,6 +2,11 @@ local RPS = game:GetService("ReplicatedStorage")
 local Storage = RPS:WaitForChild("ClientStorage")
 local FormationCalculator = {}
 
+
+local raycastParams = RaycastParams.new()
+raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+raycastParams.FilterDescendantsInstances = {workspace.NPCS, workspace.PERSONAS, workspace.SCRIPTING, workspace.BOUNDS, workspace.CAMERAS, workspace.NPCWALKERS, workspace.CHARACTERS, workspace.PARTICLES}
+
 local function getModel(fighter)
 	if fighter.Instance then
 		return fighter.Instance
@@ -15,14 +20,6 @@ end
 local function getFloorY(x, y, z)
 	local rayOrigin = Vector3.new(x, y + 10, z)
 	local rayDirection = Vector3.new(0, -50, 0)
-	
-	local raycastParams = RaycastParams.new()
-	raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-	-- We exclude all the fighters to ensure we hit the map floor, not another character
-	local ignoreList = {}
-	if workspace:FindFirstChild("NPCS") then table.insert(ignoreList, workspace.NPCS) end
-	-- Optionally add more ignore folders here (like Players)
-	raycastParams.FilterDescendantsInstances = ignoreList
 
 	local result = workspace:Raycast(rayOrigin, rayDirection, raycastParams)
 	if result then
@@ -39,14 +36,16 @@ function FormationCalculator.CalculateFormations(fightTable, centerPosition)
 	local flatLook = Vector3.new(lookVec.X, 0, lookVec.Z).Unit
 	local baseCFrame = CFrame.new(centerPosition.Position, centerPosition.Position + flatLook)
 	
-	local spacing = 6
+	local allySpacing = 6
+	local enemySpacing = 12.5
 	
 	-- Enemy Center
-	local enemyCenter = baseCFrame * CFrame.new(0, 0, -15)
+	local enemyOffset = 30
+	local enemyCenter = baseCFrame * CFrame.new(0, 0, -enemyOffset)
 	
 	for i, fighter in ipairs(fightTable.PlayerFighters) do
 		-- Position them in a slight V-formation
-		local x = (i - (#fightTable.PlayerFighters/2 + 0.5)) * spacing
+		local x = (i - (#fightTable.PlayerFighters/2 + 0.5)) * allySpacing
 		local z = math.abs(x) * 0.3 -- curve backwards slightly
 		
 		-- Start relative to baseCFrame
@@ -71,8 +70,8 @@ function FormationCalculator.CalculateFormations(fightTable, centerPosition)
 	end
 	
 	for i, fighter in ipairs(fightTable.EnemyFighters) do
-		local x = (i - (#fightTable.EnemyFighters/2 + 0.5)) * spacing
-		local z = -15 - (math.abs(x) * 0.3) -- curve away slightly
+		local x = (i - (#fightTable.EnemyFighters/2 + 0.5)) * enemySpacing
+		local z = (-enemyOffset) - (math.abs(x) * 0.3) -- curve away slightly
 		
 		-- Randomize slightly for dynamic feel
 		local randomOffset = CFrame.new(math.random(-1, 1), 0, math.random(-1, 1))

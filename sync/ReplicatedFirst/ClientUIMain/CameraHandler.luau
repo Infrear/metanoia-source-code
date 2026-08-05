@@ -304,4 +304,31 @@ function CameraManager.Stop(sendBacktoHuman)
 	end
 end
 
+function CameraManager.BattleIntroPunch()
+	-- Pokemon-style beat for the moment a fight kicks off: a quick zoom OUT (FOV widens, reads as the
+	-- camera whipping back) immediately followed by a snappier zoom IN that overshoots past normal and
+	-- eases back -- the overshoot is what gives it that dynamic, velocity-driven punch instead of a
+	-- flat linear zoom. Runs before the scrub transition covers the screen and before any of the heavy
+	-- fighter cloning/animation loading starts.
+	unbindAllBinds()
+	cam.CameraType = Enum.CameraType.Scriptable
+
+	local baseFOV = cam.FieldOfView
+	if baseFOV <= 1 then baseFOV = 70 end -- guard against catching it mid some other 0/1 FOV tween
+	local pulledBackFOV = baseFOV + 45
+	local punchedInFOV = baseFOV - 25
+
+	local outTween = TS:Create(cam, TweenInfo.new(0.75, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {FieldOfView = pulledBackFOV})
+	outTween:Play()
+	outTween.Completed:Wait()
+
+	local inTween = TS:Create(cam, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {FieldOfView = punchedInFOV})
+	inTween:Play()
+	inTween.Completed:Wait()
+
+	local settleTween = TS:Create(cam, TweenInfo.new(0.18, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {FieldOfView = baseFOV})
+	settleTween:Play()
+	settleTween.Completed:Wait()
+end
+
 return CameraManager

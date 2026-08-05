@@ -44,7 +44,11 @@ local function startBridgeCombat(plr)
 	for i = 1, enemyCount do
 		local golemPersona = PersonaData.new("Golem")
 		local golemFighter = Fighter.new("Golem", {ActivePersona = golemPersona}, nil)
-		golemFighter.IsNPC = true
+		-- Golems are Wild Personas (their own trainer -- walkup/idle/attack only, no summon
+		-- cinematic, no separate "user"). IsNPC is for persona-USER allies like Timmy; flagging
+		-- golems with it made the client treat them as Characters, which is why their combat
+		-- animations weren't playing (wrong anim folder + no CombatAnims.Characters.Golem).
+		golemFighter.IsWildPersona = true
 		table.insert(golems, golemFighter)
 	end
 	

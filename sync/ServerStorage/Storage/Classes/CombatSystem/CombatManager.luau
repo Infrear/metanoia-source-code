@@ -339,7 +339,32 @@ function CombatManager.InitializeBattle(splitParticipants, centerCFrame) -- star
 		CombatReplicator:FireClient(plrTab.PlayerObject, "entranceAnimations", {fightTable = tab})
 	end
 	
-	task.wait(3.15) -- Yielding for entrance animations
+	-- Wait for each involved player's client to actually finish their entrance sequence (scrub
+	-- transition, cloning fighters in, loading animations, the camera walk-in) instead of guessing a
+	-- fixed time -- a fixed guess doesn't know how much THIS fight needs to load (more fighters/heavier
+	-- assets like an NPC ally's persona-summon = longer), which was cutting the walk-in camera off
+	-- early whenever the real setup took longer than the guess. Capped with a timeout so one
+	-- stuck/laggy/disconnected client can't hang the whole fight for everyone else.
+	local pendingEntranceAcks = {}
+	for _, plrTab in ipairs(tab.PlayersInvolved) do
+		pendingEntranceAcks[plrTab.PlayerObject] = true
+	end
+
+	local entranceAckCon
+	entranceAckCon = CombatReplicator.OnServerEvent:Connect(function(plr, action)
+		if action == "entranceComplete" then
+			pendingEntranceAcks[plr] = nil
+		end
+	end)
+
+	local ENTRANCE_TIMEOUT = 8
+	local waited = 0
+	while next(pendingEntranceAcks) and waited < ENTRANCE_TIMEOUT do
+		task.wait(0.1)
+		waited += 0.1
+	end
+	entranceAckCon:Disconnect()
+
 	CombatManager.NextTurn(tab)
 end
 

@@ -222,6 +222,7 @@ function GUIMaster.FocusCamOnTarget(instance, pos, shouldDelay)
 		if interupted then return end
 	end
 	-- early bug here ig?
+	--  ReplicatedFirst.ClientUIMain.GUIMaster:226: attempt to index nil with 'Instance', probably fix this in case the instance isn't there anymore or something idk
 	local relativeCF = CFrame.new(pos or instance:GetPivot().Position):ToObjectSpace(CFrame.new(GUIMaster.CurrentFighterData.Instance:GetPivot().Position))
 	--print(relativeCF.Position)
 	local lerped = CFrame.new(0, 0, 0):Lerp(relativeCF, 0.5)
