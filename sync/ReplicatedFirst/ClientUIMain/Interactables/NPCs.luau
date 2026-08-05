@@ -721,7 +721,7 @@ local function bindChoice(btn)
 end
 
 -- Global Functions
-function NPCM.runNPC(npcObject, givenDialogue, displayName) -- dialogueName and displayName is optional if you have an npc model
+function NPCM.runNPC(npcObject, givenDialogue, displayName, overrideDilog) -- dialogueName and displayName is optional if you have an npc model
 	if NPCM.currentNPC or (not ((givenDialogue and ((typeof(givenDialogue) == 'string' and npcIndex[givenDialogue]) or (((typeof(givenDialogue) == 'Instance') and (givenDialogue:IsA("ModuleScript")))))) or ((npcObject and npcObject:GetAttribute("NPCType") and npcIndex[npcObject.Name])))) then return end
 
 	if not displayName and npcObject then
@@ -735,6 +735,7 @@ function NPCM.runNPC(npcObject, givenDialogue, displayName) -- dialogueName and 
 	end
 
 	NPCM.currentNPC = npcObject
+	NPCM.IsActive = true
 	local options = {}
 
 	for i, v in pairs(generalTES) do
@@ -774,11 +775,11 @@ function NPCM.runNPC(npcObject, givenDialogue, displayName) -- dialogueName and 
 	local dilogs = npcInfo.Dialogues
 	local dilog = dilogs.First
 
-	if displayName then
+	if displayName and not overrideDilog then
 		if npcType == "Quest" and countDict(questData.Current) >= 2 and (not (npcData[displayName] and (npcData[displayName] ~= "First") and npcData[displayName].QuestSequenceIndex and npcData[displayName].QuestSequenceIndex >= 1)) then
 			dilog = dilogs["2manyquests"] or npcIndex.TooManyQuestsDefaultDialouge
 		elseif npcData[displayName] then
-			dilog = dilogs[npcData[displayName].Behavior]
+			dilog = dilogs[npcData[displayName].Behavior] or dilogs.First
 		end
 	end
 
@@ -795,77 +796,18 @@ function NPCM.runNPC(npcObject, givenDialogue, displayName) -- dialogueName and 
 	local te1 = nil
 	local first = true
 
+	local playingAnims = {}
 	if npcInfo.OpenAnimation then
 		local found = Storage.Animations.Actions:FindFirstChild(npcInfo.OpenAnimation, true)
 		if found and hum then
 			local animtrac = hum:LoadAnimation(found)
 			animtrac:Play(found:GetAttribute("FadeTime") or 0.45)
+			table.insert(playingAnims, animtrac)
 		end
 	end
 
 
-	-- --- Camera Focus System ----------------------------------------------------
-	-- npcInfo.CameraFocus (bool or table) enables focus on the NPC's model.
-	-- Optionally: npcInfo.CameraFocus = { Offset = Vector3.new(0, 2, 0) }
-	-- Per-dialogue override: v.CameraOffset = Vector3.new(x, y, z)
 
-
-	local previousCameraType = cam.CameraType
-	local previousCameraCFrame = cam.CFrame
-	local focusEnabled = false
-
-	-- Default offset relative to HumanoidRootPart (or model PrimaryPart)
-	local DEFAULT_FOCUS_OFFSET = Vector3.new(0, 1.5, 0) -- aim slightly above root
-	local DEFAULT_CAMERA_DISTANCE = 8                    -- studs away from target
-	local DEFAULT_CAMERA_HEIGHT   = 1.5                 -- studs above target
-
-	-- Resolve the focus attachment point on the NPC's model
-	local function getFocusPoint(offsetOverride)
-		local root = hum and hum.Parent and (
-			hum.Parent:FindFirstChild("HumanoidRootPart") or
-				hum.Parent.PrimaryPart
-		)
-		local baseOffset = (npcInfo.CameraFocus and type(npcInfo.CameraFocus) == "table" and
-			npcInfo.CameraFocus.Offset) or DEFAULT_FOCUS_OFFSET
-
-		local finalOffset = offsetOverride or baseOffset
-
-		if root then
-			return root.Position + finalOffset
-		end
-		return nil
-	end
-
-	-- Smoothly tween the camera to look at the NPC
-	local function applyCameraFocus(offsetOverride)
-		if not focusEnabled then return end
-
-		local focusPoint = getFocusPoint(offsetOverride)
-		if not focusPoint then return end
-
-		cam.CameraType = Enum.CameraType.Scriptable
-
-		-- Position camera in front of NPC at a comfortable viewing angle
-		local npcCFrame = (hum and hum.Parent and hum.Parent.PrimaryPart)
-			and hum.Parent.PrimaryPart.CFrame
-			or CFrame.new(focusPoint)
-
-		local behind = npcCFrame.LookVector * -DEFAULT_CAMERA_DISTANCE
-		local camPos = focusPoint + behind + Vector3.new(0, DEFAULT_CAMERA_HEIGHT, 0)
-		local targetCFrame = CFrame.new(camPos, focusPoint)
-
-		local te = TS:Create(cam, TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-			CFrame = targetCFrame
-		})
-		te:Play()
-	end
-
-	-- Restore camera to its state before dialogue
-	local function restoreCameraFocus()
-		if not focusEnabled then return end
-		cam.CFrame = previousCameraCFrame
-		cam.CameraType = previousCameraType
-	end
 
 
 	for i, v in ipairs(dilog) do
@@ -874,13 +816,7 @@ function NPCM.runNPC(npcObject, givenDialogue, displayName) -- dialogueName and 
 		--
 
 
-		focusEnabled = v.CameraFocus
-		-- Apply focus when dialogue opens
-		if focusEnabled then
-			previousCameraType = cam.CameraType
-			previousCameraCFrame = cam.CFrame
-			applyCameraFocus()
-		end
+
 
 		if v.TextboxType == "Character Speaking" then
 			bar = charbar
@@ -917,6 +853,7 @@ function NPCM.runNPC(npcObject, givenDialogue, displayName) -- dialogueName and 
 			if found and hum then
 				local animtrac = hum:LoadAnimation(found)
 				animtrac:Play(found:GetAttribute("FadeTime") or 1)
+				table.insert(playingAnims, animtrac)
 			end
 		end
 		task.wait(te1.TweenInfo.Time)
@@ -1236,7 +1173,11 @@ function NPCM.runNPC(npcObject, givenDialogue, displayName) -- dialogueName and 
 		tframe.TextLabel.Text = ""
 	end
 
+	for _, anim in ipairs(playingAnims) do
+		anim:Stop()
+	end
 	NPCM.currentNPC = nil
+	NPCM.IsActive = false
 end
 
 function NPCM.setup()

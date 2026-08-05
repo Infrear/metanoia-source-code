@@ -28,6 +28,7 @@ local AnimationManager2 = char:WaitForChild("States"):WaitForChild("AnimationMan
 local KeySettings = require(Storage.Info.KeybindsMaster)
 local SkillLibrary = require(Storage.Info.SkillLibrary)
 local CameraShaker = require(Storage.Classes.BaseClasses.CameraShaker)
+local FightHudIndicators = require(script.Parent:WaitForChild("FightHudIndicators"))
 
 local CamShake = CameraShaker.new(Enum.RenderPriority.Camera.Value, function(CF)
 	cam.CFrame = cam.CFrame * CF
@@ -165,19 +166,22 @@ local function spinIndefinitely(part, speed, pivotCFrame)
 	return conn
 end
 
--- Base spin rate curve: starts fast, ramps up to max speed, then just holds there -- no slow-down,
--- it stays at max speed straight through the disappear. The crest spins at a fast constant rate in
--- the opposite direction (negative).
-local BASE_SPIN_RATE = 420
-local BASE_SPIN_PEAK_BOOST = 480 -- max speed bumped up a bit further
-local BASE_SPIN_RAMP_DURATION = 0.65 -- time to reach max; holds at max forever after this
-local BASE_SPIN_MAX = BASE_SPIN_RATE + BASE_SPIN_PEAK_BOOST
+-- Base spin rate curve: starts nearly still, then ramps up on a true exponential curve (barely
+-- moving at first, then a fast blow-up right near the end) up to max speed, then just holds there --
+-- no slow-down, it stays at max speed straight through the disappear. The crest spins at a fast
+-- constant rate in the opposite direction (negative).
+local BASE_SPIN_START = 12 -- super slow starting speed
+local BASE_SPIN_MAX = 1000 -- super fast max speed
+local BASE_SPIN_RAMP_DURATION = 0.9 -- time to reach max; holds at max forever after this
+local BASE_SPIN_EXP_STEEPNESS = 7 -- higher = stays slower for longer before the blow-up
 local function baseSpinCurve(elapsed)
 	if elapsed >= BASE_SPIN_RAMP_DURATION then
 		return BASE_SPIN_MAX
 	end
 	local t = elapsed / BASE_SPIN_RAMP_DURATION
-	return BASE_SPIN_RATE + BASE_SPIN_PEAK_BOOST * math.sin(t * (math.pi / 2))
+	-- normalized exponential: 0 at t=0, 1 at t=1, curving up increasingly steeply
+	local expT = (math.exp(BASE_SPIN_EXP_STEEPNESS * t) - 1) / (math.exp(BASE_SPIN_EXP_STEEPNESS) - 1)
+	return BASE_SPIN_START + (BASE_SPIN_MAX - BASE_SPIN_START) * expT
 end
 local CREST_SPIN_RATE = -240
 
@@ -679,14 +683,25 @@ function Maestro.PlayEntranceAnimations(camRig, allFighters)
 	
 	if rigTrack then
 		rigTrack.Stopped:Once(function()
+			local idleAnim = PreloadedAnims.Camera["Fight Idle"] or PreloadedAnims.Camera["Idle"]
+			if idleAnim then
+				playAnim(rigAnimator, idleAnim, 0.15, true)
+			else
+				CameraHandler.Circle()
+			end
 			stopped = true
 		end)
 	else
 		task.wait(3.15)
+		local idleAnim = PreloadedAnims.Camera["Fight Idle"] or PreloadedAnims.Camera["Idle"]
+		if idleAnim then
+			playAnim(rigAnimator, idleAnim, 0.15, true)
+		else
+			CameraHandler.Circle()
+		end
 		stopped = true
 	end
 	repeat task.wait() until stopped
-	print("stopped")
 end
 
 function Maestro.InitiateBattle(char, camRig, fightTable, spawnPos, LocalFightersMap, LocalClonedFighters)
@@ -738,6 +753,20 @@ function Maestro.InitiateBattle(char, camRig, fightTable, spawnPos, LocalFighter
 
 	local allFighters = fightTable.AllFighters
 
+	-- FightHudIndicators wiring -- right after fighters are cloned in/positioned, since HealthTray
+	-- needs real fighter.Instance refs and CombatStoryline needs a Speaker-name -> Instance map to
+	-- resolve against for NPCM.runNPC
+	local fightersByName = {}
+	for _, f in ipairs(allFighters) do
+		if f.ModelName then
+			fightersByName[f.ModelName] = f.Instance
+		end
+	end
+	fightersByName["Player"] = char
+
+	FightHudIndicators.HealthTray.Init(fightTable)
+	FightHudIndicators.CombatStoryline.Init(fightTable.StorylineConfig, fightersByName)
+
 	AnimationManager2.ToggleAllOverworldAnims:Invoke(false)
 
 	-- 2. Make sure animations are loaded
@@ -763,12 +792,19 @@ function Maestro.InitiateBattle(char, camRig, fightTable, spawnPos, LocalFighter
 	Maestro.BattleReady = true
 
 	task.wait(0.5)
-	print("loaded out")
 	ScreenHandler.LoadOut()
 
 	coroutine.wrap(function()
-		print("playing")
+		print("1")
 		Maestro.PlayEntranceAnimations(camRig, allFighters)
+print("2")
+		-- Tutorial-fight banter (if this battle was given a StorylineConfig) plays after the walk-in
+		-- is fully done, and WaitForClear() holds the "entranceComplete" ack (and therefore the first
+		-- turn) until the player's actually clicked all the way through it
+		FightHudIndicators.CombatStoryline.OnBattleStart()
+		print("3")
+		FightHudIndicators.CombatStoryline.WaitForClear()
+print("okay")
 		-- Tell the server the entrance sequence (cloning, animation loading, camera walk-in) is
 		-- actually done, instead of it guessing a fixed wait time -- that guess was too short
 		-- whenever this fight had more/heavier stuff to load, so turnStartUpdate would fire and
@@ -838,16 +874,17 @@ function Maestro.SummonPersona(chara, personaName)
 
 	local meshFX = spawnSummonMeshFX(personaName, spawnCFrame, targetSize, false)
 
-	-- Run this persona's summon VFX module (or the fallback) alongside the mesh FX. Wrapped in pcall
-	-- since these are effect modules that could error without needing to break the whole summon.
-	local summonVFXFn = getSummonVFXFunction(personaName)
-	if summonVFXFn then
-		local vfxOk, vfxErr = pcall(summonVFXFn, spawnCFrame, personaModel, targetSize, TIS.Grow.Time)
-		if not vfxOk then
-			warn("[Maestro] summon VFX error for '" .. personaName .. "': " .. tostring(vfxErr))
+	coroutine.wrap(function()
+		-- Run this persona's summon VFX module (or the fallback) alongside the mesh FX. Wrapped in pcall
+		-- since these are effect modules that could error without needing to break the whole summon.
+		local summonVFXFn = getSummonVFXFunction(personaName)
+		if summonVFXFn then
+			local vfxOk, vfxErr = pcall(summonVFXFn, spawnCFrame, personaModel, targetSize, TIS.Grow.Time)
+			if not vfxOk then
+				warn("[Maestro] summon VFX error for '" .. personaName .. "': " .. tostring(vfxErr))
+			end
 		end
-	end
-
+	end)()
 	local hl = Highlights.SpawnHighlight(PreloadedAnims.Characters[chara].CurrentPersona, {
 		Enabled = false,
 		FillColor = Color3.new(1, 0.333333, 1),

@@ -57,9 +57,32 @@ local function startBridgeCombat(plr)
 		PlayerFighters = {plrFighter, timmyFighter},
 		EnemyFighters = golems
 	}
-	
+
+	-- Tutorial-fight dialogue for this fight -- see FightHudIndicators.CombatStoryline for the
+	-- exact shape (Steps with Trigger = OnStart/OnEnd/AfterRound/OnEvent, Speaker resolved against
+	-- the fighter map client-side, Dialogue referencing a ModuleScript under this folder).
+	local storylineDialogues = Storage.Scenes.Scene_GolemTutorialFight.Dialogues
+	local storylineConfig = {
+		Steps = {
+			{
+				Trigger = "OnStart", 
+				Speaker = "Timmy", 
+				Dialogue = "TimmyIntro", 
+				DialoguesFolder = storylineDialogues, 
+				CameraFocus = false
+			},
+			{
+				Trigger = "OnEvent",
+				Event = "GolemEnraged",
+				Speaker = "Timmy",
+				Dialogue = "GolemEnraged",
+				DialoguesFolder = storylineDialogues,
+			},
+		}
+	}
+
 	-- The Formations will be calculated inside InitializeBattle
-	CombatManager.InitializeBattle(splitParticipants, plr.Character:GetPivot())
+	CombatManager.InitializeBattle(splitParticipants, plr.Character:GetPivot(), storylineConfig)
 end
 
 -- (Removed getFormationOffsets as FormationCalculator handles this now)

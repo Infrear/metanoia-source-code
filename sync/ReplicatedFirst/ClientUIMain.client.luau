@@ -35,6 +35,7 @@ local CameraHandler = require(script:WaitForChild("CameraHandler"))
 local SceneDirector = require(script:WaitForChild("SceneDirector"))
 local ScreenChangeHandler = require(script:WaitForChild("ScreenChangeHandler"))
 local Maestro = require(script:WaitForChild("CombatCienematics"))
+local FightHudIndicators = require(script:WaitForChild("FightHudIndicators"))
 local slotSelect = require(script:WaitForChild("SlotSelect"))
 
 local cursorImg = playerGUI:WaitForChild("Cursor"):WaitForChild("Cursor"):WaitForChild("ImageLabel")
@@ -411,6 +412,16 @@ CombatReplicator.OnClientEvent:Connect(function(action, data)
 		
 		if SpinConnection then SpinConnection:Disconnect() end
 		if ActiveRing then ActiveRing:Destroy() end
+
+		FightHudIndicators.CombatStoryline.OnBattleEnd()
+		FightHudIndicators.CombatStoryline.WaitForClear()
+		FightHudIndicators.CombatStoryline.Cleanup()
+		FightHudIndicators.HealthTray.Clear()
+
+	elseif action == "storylineEvent" then
+		-- Server-fired custom CombatStoryline beats (e.g. "GolemEnraged" when a golem crosses its
+		-- HP threshold) -- see CombatManager.ExecuteSkill for where these get fired
+		FightHudIndicators.CombatStoryline.FireEvent(data.EventName)
 		
 	elseif action == "promptBatonPass" then
 		-- Prompt the Baton Pass UI

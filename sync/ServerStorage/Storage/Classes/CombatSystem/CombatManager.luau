@@ -194,6 +194,15 @@ function CombatManager.ExecuteSkill(attacker, targets, skillName, fightTable) --
 		local result = target:TakeImpact(baseDamage, skill.Element)
 		results[target] = result
 		oldHealths[oldHealth] = oldHealth
+
+		-- CombatStoryline "GolemEnraged" beat -- fires once per battle (not once per golem) the
+		-- first time any Golem crosses half HP, so multiple golems enraging doesn't spam the line
+		if target.ModelName == "Golem" and not fightTable.GolemEnrageFired and target.HP > 0 and target.HP <= target.MaxHP * 0.5 then
+			fightTable.GolemEnrageFired = true
+			for _, plrTab in ipairs(fightTable.PlayersInvolved) do
+				CombatReplicator:FireClient(plrTab.PlayerObject, "storylineEvent", {EventName = "GolemEnraged"})
+			end
+		end
 		
 		if result == "WEAK" then CRITCOUNTER += 1 end
 		
@@ -272,7 +281,7 @@ function CombatManager.ExecuteSkill(attacker, targets, skillName, fightTable) --
 	end
 end
 
-function CombatManager.InitializeBattle(splitParticipants, centerCFrame) -- start the combat loop
+function CombatManager.InitializeBattle(splitParticipants, centerCFrame, storylineConfig) -- start the combat loop
 	local fullParticipants = {}
 	for i, v in pairs(splitParticipants) do
 		if i == "PlayersInvolved" then continue end
@@ -295,6 +304,10 @@ function CombatManager.InitializeBattle(splitParticipants, centerCFrame) -- star
 	tab.AllFighters = fullParticipants
 	tab.PlayerFighters = splitParticipants.PlayerFighters
 	tab.EnemyFighters = splitParticipants.EnemyFighters
+	-- optional CombatStoryline config (see FightHudIndicators.CombatStoryline) -- rides along in
+	-- fightTable exactly like everything else here, so it reaches the client for free through the
+	-- existing "start" FireClient below, no separate remote needed
+	tab.StorylineConfig = storylineConfig
 	
 	-- Formation Spot Mapping
 	for i, f in ipairs(tab.PlayerFighters) do
@@ -359,7 +372,19 @@ function CombatManager.InitializeBattle(splitParticipants, centerCFrame) -- star
 
 	local ENTRANCE_TIMEOUT = 8
 	local waited = 0
-	while next(pendingEntranceAcks) and waited < ENTRANCE_TIMEOUT do
+	
+	local function checkPendingPlayers()
+		for plr, _ in pairs(pendingEntranceAcks) do
+			if not plr.Parent then -- Player disconnected
+				pendingEntranceAcks[plr] = nil
+			end
+		end
+		return next(pendingEntranceAcks) ~= nil
+	end
+	while checkPendingPlayers() do
+		if #tab.PlayersInvolved > 1 and waited >= ENTRANCE_TIMEOUT then
+			break
+		end
 		task.wait(0.1)
 		waited += 0.1
 	end
@@ -420,9 +445,11 @@ function CombatManager.NextTurn(fightTable) -- handle logic for current turn
 
 			-- 2. Convert indices back to Fighter Objects
 			local targetObjects = {}
-			for _, idx in ipairs(recieved.TargetIndices) do
-				if fightTable.AllFighters[idx] then
-					table.insert(targetObjects, fightTable.AllFighters[idx])
+			if recieved.TargetIndices then
+				for _, idx in ipairs(recieved.TargetIndices) do
+					if fightTable.AllFighters[idx] then
+						table.insert(targetObjects, fightTable.AllFighters[idx])
+					end
 				end
 			end
 			

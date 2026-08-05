@@ -48,6 +48,7 @@
 ]]
 
 local NPCM = require(script.Parent.Parent:WaitForChild("Interactables"):WaitForChild("NPCs"))
+local CameraHandler = require(script.Parent.Parent:WaitForChild("CameraHandler"))
 
 local CombatStoryline = {}
 CombatStoryline.IsActive = false
@@ -73,15 +74,20 @@ local function runStep(step)
 		end
 	end
 
-	NPCM.runNPC(speakerInstance, dialogueRef, step.DisplayName or step.Speaker)
+	if step.CameraFocus and speakerInstance then
+		CameraHandler.FocusOn(speakerInstance, 12.5)
+	end
 
+	coroutine.wrap(function()
+		NPCM.runNPC(speakerInstance, dialogueRef, step.DisplayName or step.Speaker, true)
+	end)()
 	-- runNPC sets NPCM.currentNPC synchronously if the call was accepted -- if it's still nil
 	-- right after, the call got rejected (bad dialogue ref, already-running dialogue, etc), so
 	-- there's nothing to wait on
 	local started = false
 	local waited = 0
 	while waited < WAIT_FOR_START_TIMEOUT do
-		if NPCM.currentNPC ~= nil then
+		if NPCM.IsActive then
 			started = true
 			break
 		end
@@ -94,9 +100,13 @@ local function runStep(step)
 	end
 
 	waited = 0
-	while NPCM.currentNPC ~= nil and waited < WAIT_FOR_END_TIMEOUT do
+	while NPCM.IsActive and waited < WAIT_FOR_END_TIMEOUT do
 		task.wait(0.1)
 		waited += 0.1
+	end
+
+	if step.CameraFocus and _G.CombatCamRig then
+		CameraHandler.SetToRig(_G.CombatCamRig)
 	end
 end
 
