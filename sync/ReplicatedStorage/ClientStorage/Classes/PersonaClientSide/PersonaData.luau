@@ -4,17 +4,52 @@ PersonaData.__index = PersonaData
 
 -- Global Variables 
 PersonaData.Elements = {
-	PIERCE = "Physical",
-	SLASH = "Physical",
-	PHYSICAL = "Physical",
-	FIRE = "Fire",
-	ICE = "Ice",
-	ELEC = "Elec",
-	WIND = "Wind",
-	PSY = "Psy",
-	NUCLEAR = "Nuclear",
-	BLESS = "Bless",
-	CURSE = "Curse"
+	EARTH = "Earth",
+	LIGHT = "Light",
+	FLORA = "Flora",
+	FAUNA = "Fauna",
+	DARKNESS = "Darkness",
+	INSECT = "Insect",
+	DRAGON = "Dragon",
+	SPIRIT = "Spirit",
+	ALIEN = "Alien",
+	WARRIOR = "Warrior",
+	FLAME = "Flame",
+	OCEAN = "Ocean",
+	AKHET = "Akhet",
+	ELECTRICITY = "Electricity",
+	PHYSICAL = "Physical"
+}
+
+PersonaData.BasePersonas = {
+	["Angel"] = {
+		Stats = { ST = 4, MA = 6, EN = 4, AG = 6, LU = 5 },
+		KnownSkills = { "Light Strike", "Spirit Heal" }, -- placeholder skills
+		Affinities = {
+			[PersonaData.Elements.LIGHT] = 2,
+			[PersonaData.Elements.SPIRIT] = 2,
+			[PersonaData.Elements.DARKNESS] = -1,
+		}
+	},
+	["Balloon"] = {
+		Stats = { ST = 2, MA = 5, EN = 5, AG = 7, LU = 6 },
+		KnownSkills = { "Flora Breeze", "Spirit Heal" },
+		Affinities = {
+			[PersonaData.Elements.FLORA] = 2,
+			[PersonaData.Elements.SPIRIT] = 1,
+			[PersonaData.Elements.FLAME] = -1,
+		}
+	},
+	["Golem"] = {
+		Stats = { ST = 8, MA = 2, EN = 9, AG = 2, LU = 4 },
+		KnownSkills = { "Rock Smash", "Alien Laser" },
+		Affinities = {
+			[PersonaData.Elements.EARTH] = 2,
+			[PersonaData.Elements.ALIEN] = 1,
+			[PersonaData.Elements.FLORA] = -1,
+			[PersonaData.Elements.OCEAN] = -1,
+		}
+	}
 }
 
 -- Global Functions 
@@ -24,31 +59,20 @@ function PersonaData.new(name, stats, affinities, skills, level, exp) -- Declara
 	self.Name = name or "Angel"
 	self.Level = level or 1
 	self.Exp = exp or 0
+	
+	local base = PersonaData.BasePersonas[self.Name] or PersonaData.BasePersonas["Angel"]
+
 	self.Stats = stats or {
-		ST = 5, -- strength -> physical damage 
-		MA = 5, -- magic -> elemental damage 
-		EN = 5, -- endurance -> defense 
-		AG = 5, -- agility -> accuracy/evasion/turn order 
-		LU = 5  -- luck -> crit rate/ailment chance 
+		ST = base.Stats.ST, 
+		MA = base.Stats.MA, 
+		EN = base.Stats.EN, 
+		AG = base.Stats.AG, 
+		LU = base.Stats.LU  
 	}
-	--print(self.Stats)
-	self.KnownSkills = skills or { --> just for testing, personas wont have all skills to start obv
-		"Zio", 
-		"Agi", 
-		"Garu", 
-		"Cleave"
-	}
+	self.KnownSkills = skills or table.clone(base.KnownSkills)
 	
 	-- affinity ratings: 1 = neutral, 0 = null, -1 = weak, 2 = resist, 3 = drain, 4 = repel
-	self.Affinities = affinities or { -- example btw
-		[PersonaData.Elements.PHYSICAL] = 1,
-		[PersonaData.Elements.FIRE] = 1,
-		[PersonaData.Elements.ICE] = -1, -- weak to ice 
-		[PersonaData.Elements.ELEC] = 1,
-		[PersonaData.Elements.WIND] = 1,
-		[PersonaData.Elements.BLESS] = 2, -- resists bless
-		[PersonaData.Elements.CURSE] = 0, -- nulls Curse
-	}
+	self.Affinities = affinities or table.clone(base.Affinities)
 
 	return self
 end

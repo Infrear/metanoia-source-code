@@ -57,10 +57,9 @@ local function showNPC(npcObject)
 	npcObject:SetAttribute("Fakebuild", false)
 	local npcRoot = npcObject.PrimaryPart
 	local prompt = npcRoot and npcRoot:FindFirstChildOfClass("ProximityPrompt") or npcObject:FindFirstChildOfClass("ProximityPrompt")
-	print(npcObject:GetAttribute("OgActivationDist"))
 	if prompt then 
-		if npcObject:GetAttribute("OGActivationDist") then
-			prompt.MaxActivationDistance = npcObject:GetChildren("OgActivationDist")
+		if npcObject:GetAttribute("OgActivationDist") then
+			prompt.MaxActivationDistance = npcObject:GetAttribute("OgActivationDist")
 		else
 			prompt.Enabled = true		
 		end	

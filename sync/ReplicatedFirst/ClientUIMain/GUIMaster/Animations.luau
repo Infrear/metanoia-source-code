@@ -325,8 +325,6 @@ end
 
 function AnimsManager.HighlightTE(model, Colors, killshot)
 	--local model = script.Parent
-	local hum = model:WaitForChild("Humanoid")
-	local hrp = model:WaitForChild("HumanoidRootPart")
 	--local DealDamage = model:WaitForChild("DealDamage", 20)
 	--local AddHealth = model:WaitForChild("AddHealth", 20)
 

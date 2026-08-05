@@ -14,7 +14,6 @@ local CombatReplicator = Storage.Events.Remotes.ReplicateCombat
 local SimpleAI = require(Storage.Modules.Mine.SimpleAI)
 local SkillLibrary = require(Storage.Info.SkillLibrary)
 
-local adminInfo  =  require(Storage.Info.AdminInfo)
 local gameSettings = require(Storage.Info.GameSettings)
 local combatSettings = gameSettings.CombatSettings
 
@@ -28,7 +27,22 @@ local SpinConnection = nil
 local CurrentTurnIndex = 1
 
 -- Local Functions
--- (Removed handleRingVisuals as Visuals are client side now)
+local function handleRingVisuals(fighter) -- handles the selection ring behavior
+	if SpinConnection then SpinConnection:Disconnect() end
+	if ActiveRing then ActiveRing:Destroy() end
+	
+	local ringTemplate = Storage.Effects.Combat.Ring
+	ActiveRing = ringTemplate:Clone()
+	ActiveRing.Parent = fighter.Instance
+
+	SpinConnection = RS.Heartbeat:Connect(function()
+		if ActiveRing then
+			ActiveRing:PivotTo(ActiveRing:GetPivot() * CFrame.Angles(0, math.rad(2), 0))
+			local floorCF = fighter.Instance:FindFirstChild("LeftFoot") and CFrame.new(fighter.Instance:GetPivot().X, (fighter.Instance:FindFirstChild("LeftFoot"):GetPivot().Y), fighter.Instance:GetPivot().Z)  or (fighter.Instance:GetPivot() * CFrame.new(0, -2.8, 0))
+			ActiveRing:PivotTo(CFrame.new(floorCF.Position) * (ActiveRing:GetPivot() - ActiveRing:GetPivot().Position))
+		end
+	end)
+end
 
 local function replicateAction(fightTable, attackerData, targets, skillName, damage, results, oldHealths, kshot, atkType, wUp)
 	for i, plrTab in ipairs(fightTable.PlayersInvolved) do
@@ -110,19 +124,7 @@ function CombatManager.ExecuteSkill(attacker, targets, skillName, fightTable) --
 	for _, s in ipairs(attacker.Skills) do
 		if s == skillName then hasSkill = true break end
 	end
-	
-	if not hasSkill then 
-		if attacker.PlayerOwner then
-			if table.find(adminInfo.Admins, attacker.PlayerOwner.Name) then
-				warn(attacker.PlayerOwner.Name .. " bypassed usage of unauthorized skills with admin permissions!")
-			else
-				return warn(attacker.PlayerOwner.Name .. " tried to use unauthorized skill!") 
-			end
-		else
-			-- NPC Bypass (Since their KnownSkills are handled by AI)
-			hasSkill = true
-		end
-	end
+	if not hasSkill then return warn(attacker.Instance.Name .. " tried to use unauthorized skill!") end
 	
 	-- 2. COST VALIDATION --> implement this on the client eventually so we dont just yield the game for regular players
 	if skill.CostType == "SP" then
@@ -178,10 +180,6 @@ function CombatManager.ExecuteSkill(attacker, targets, skillName, fightTable) --
 	else
 		baseDamage = attacker.ActivePersona.Stats.MA * skill.Power
 	end
-	
-	if attacker.BatonBoost then
-		baseDamage = baseDamage * 1.5 -- Baton pass 50% damage boost
-	end
 
 	local results, oldHealths, kShots = {}, {}, {}
 	local CRITCOUNTER = 0
@@ -226,53 +224,18 @@ function CombatManager.ExecuteSkill(attacker, targets, skillName, fightTable) --
 		return -- Battle ended
 	end
 	
-	-- Clear temporary baton pass boosts
-	if attacker.BatonBoost then
-		attacker.BatonBoost = false
-	end
-	
 	if CRITCOUNTER >= 1 then
 		print("CRITICAL HIT! ONE MORE!")
-		if attacker.PlayerOwner then
-			CombatReplicator:FireClient(attacker.PlayerOwner, "promptBatonPass", {fightTable = fightTable})
-			local con, recieved = nil, false
-			con = CombatReplicator.OnServerEvent:Connect(function(plr, action, targetFighterIndex)
-				if plr == attacker.PlayerOwner and action == "batonPass" then
-					recieved = { targetIndex = targetFighterIndex }
-					if con then con:Disconnect() end
-				end
-			end)
-			
-			local timer = 0
-			local limit = #fightTable.PlayersInvolved > 1 and combatSettings.PlayerActionTimeLimit or 9999
-			while not recieved and timer < limit do
-				timer += task.wait(0.5)
-				if not attacker.PlayerOwner then break end
-			end
-			
-			if recieved and recieved.targetIndex then
-				local targetFighter = fightTable.AllFighters[recieved.targetIndex]
-				if targetFighter then
-					targetFighter.BatonBoost = true -- Stat boost flag for next hit
-					fightTable.BonusTurnFighter = targetFighter
-					CombatManager.NextTurn(fightTable)
-					return
-				end
-			end
-		end
-		
-		-- Default to self if no baton pass target selected or AI
-		fightTable.BonusTurnFighter = attacker
+		-- WE DO NOT INCREMENT THE TURN INDEX SO THE SAME FIGHTER GOES AGAIN
 		CombatManager.NextTurn(fightTable)
 	else
 		-- NORMAL TURN ROTATION
-		fightTable.BonusTurnFighter = nil
 		CurrentTurnIndex = (CurrentTurnIndex % #fightTable.AllFighters) + 1
 		CombatManager.NextTurn(fightTable)
 	end
 end
 
-function CombatManager.InitializeBattle(splitParticipants, centerCFrame) -- start the combat loop
+function CombatManager.InitializeBattle(splitParticipants) -- start the combat loop
 	local fullParticipants = {}
 	for i, v in pairs(splitParticipants) do
 		if i == "PlayersInvolved" then continue end
@@ -295,23 +258,11 @@ function CombatManager.InitializeBattle(splitParticipants, centerCFrame) -- star
 	tab.AllFighters = fullParticipants
 	tab.PlayerFighters = splitParticipants.PlayerFighters
 	tab.EnemyFighters = splitParticipants.EnemyFighters
-	
-	-- Formation Spot Mapping
-	for i, f in ipairs(tab.PlayerFighters) do
-		f.FormationSpot = i
-	end
-	for i, f in ipairs(tab.EnemyFighters) do
-		f.FormationSpot = i
-	end
-	
-	local FormationCalculator = require(Storage.Modules.Mine.FormationCalculator)
+	local fightIndex = tostring(#Fights + 1)
 	table.insert(Fights, tab)
-	if centerCFrame then
-		FormationCalculator.CalculateFormations(tab, centerCFrame)
-	end
 	
 	if #tab.PlayersInvolved == 1 then
-		tab.SpeedMultiplier = tab.PlayersInvolved[1].PlayerObject:GetAttribute("CurrentCombatSpeedMultiplier") or 1 
+		tab.SpeedMultiplier = tab.PlayersInvolved[1].PlayerObject:GetAttribute("CurrentCombatSpeedMultiplier") or 1 --> implement ui for this later lowk, but the code is already fully integrated
 	end
 	
 	CurrentTurnIndex = 1
@@ -334,19 +285,14 @@ function CombatManager.InitializeBattle(splitParticipants, centerCFrame) -- star
 		CombatReplicator:FireClient(plrTab.PlayerObject, "start", {fightTable = tab, fighterData = plrTab.FighterObject})
 	end
 	
-	-- Play Entrance Animations concurrently
-	for i, plrTab in ipairs(tab.PlayersInvolved) do
-		CombatReplicator:FireClient(plrTab.PlayerObject, "entranceAnimations", {fightTable = tab})
-	end
-	
-	task.wait(3.15) -- Yielding for entrance animations
+	task.wait(3.15)
 	CombatManager.NextTurn(tab)
 end
 
 function CombatManager.NextTurn(fightTable) -- handle logic for current turn
 	--task.wait(0.5) -- idk if i need this
-	local currentStriker = fightTable.BonusTurnFighter or fightTable.AllFighters[CurrentTurnIndex]
-	
+	local currentStriker = fightTable.AllFighters[CurrentTurnIndex]
+	handleRingVisuals(currentStriker)
 	for i, plrTab in ipairs(fightTable.PlayersInvolved) do
 		if not currentStriker.PlayerOwner or plrTab.PlayerObject ~= currentStriker.PlayerOwner then
 			CombatReplicator:FireClient(plrTab.PlayerObject, "turnStartUpdate", {
@@ -355,14 +301,9 @@ function CombatManager.NextTurn(fightTable) -- handle logic for current turn
 		end
 	end
 	
-	if fightTable.BonusTurnFighter and not fightTable.BonusTurnFighter.PlayerOwner then
-		print("BATON PASS TRIGGERED TO NPC! Thinking...")
-		task.wait(1.5) -- "Think" for a second before attacking
-	end
-	
 	if currentStriker.PlayerOwner then
 		CombatReplicator:FireClient(currentStriker.PlayerOwner, "yourTurn", {fightTable = fightTable, fighterData = currentStriker})
-		print("WAITING FOR ACTION FROM: " .. currentStriker.PlayerOwner.Name)
+		print("WAITING FOR ACTION FROM: " .. currentStriker.Instance.Name)
 		local con, recieved = nil, false
 		con = CombatReplicator.OnServerEvent:Connect(function(plr, action, skill, targetIndices, speed)
 			if plr == currentStriker.PlayerOwner then
@@ -412,7 +353,7 @@ function CombatManager.NextTurn(fightTable) -- handle logic for current turn
 		end
 	else
 		-- do ai stuff
-		print("AI'S TURN: " .. (currentStriker.ModelName or "NPC"))
+		print("AI'S TURN: " .. currentStriker.Instance.Name)
 		task.wait((combatSettings.AI_THINK_TIME/combatSettings.CombatSpeedMultiplier) / fightTable.SpeedMultiplier) -- simulate thinking
 		local decision = SimpleAI.GetDecision(currentStriker, fightTable)
 

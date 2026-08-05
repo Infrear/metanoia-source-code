@@ -7,7 +7,7 @@ local SimpleAI = {}
 
 function SimpleAI.GetDecision(striker, fightTable)
 	-- 1. Pick a random skill from striker's list
-	local availableSkills = ((striker.Skills and #striker.Skills > 0) and striker.Skills) or {"Agi"}
+	local availableSkills = ((striker.Skills and #striker.Skills > 0) and striker.Skills) or {"Attack"}
 	local chosenSkillName = availableSkills[math.random(1, #availableSkills)]
 	local skillData = SkillLibrary.GetSkill(chosenSkillName)
 

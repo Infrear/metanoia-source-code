@@ -1,6 +1,7 @@
 -- Services
 local TS = game:GetService("TweenService")
 local RPS = game:GetService("ReplicatedStorage")
+local RS = game:GetService("RunService")
 local UIS = game:GetService("UserInputService")
 local PLRS = game:GetService("Players")
 
@@ -34,6 +35,7 @@ local CameraHandler = require(script:WaitForChild("CameraHandler"))
 local SceneDirector = require(script:WaitForChild("SceneDirector"))
 local ScreenChangeHandler = require(script:WaitForChild("ScreenChangeHandler"))
 local Maestro = require(script:WaitForChild("CombatCienematics"))
+local slotSelect = require(script:WaitForChild("SlotSelect"))
 
 local cursorImg = playerGUI:WaitForChild("Cursor"):WaitForChild("Cursor"):WaitForChild("ImageLabel")
 
@@ -69,6 +71,10 @@ local TIS = {
 		false
 	)
 }
+
+local raycastParams = RaycastParams.new()
+raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+raycastParams.FilterDescendantsInstances = {workspace.NPCS, workspace.PERSONAS, workspace.SCRIPTING, workspace.BOUNDS, workspace.CAMERAS, workspace.NPCWALKERS, workspace.CHARACTERS}
 
 -- Local Functions
 local function dictfind(tab, instKey)
@@ -195,6 +201,7 @@ local function setupUIs()
 	playerGUI:WaitForChild("Interactables").Enabled = false
 	playerGUI:WaitForChild("GlobalUI").Enabled = false
 	playerGUI:WaitForChild("SkillsMenu").Enabled = false
+	playerGUI:WaitForChild("SlotSelectGui").Enabled = true
 	if playerGUI:FindFirstChild("Idk Nova u can name this") then
 		playerGUI:FindFirstChild("Idk Nova u can name this").Enabled = false
 	end
@@ -234,9 +241,8 @@ local function setupUIs()
 
 	script.Parent = playerGUI
 	
-	local SlotSelect = require(script:WaitForChild("SlotSelect"))
-	SlotSelect.setup()
 
+	slotSelect = require(script:WaitForChild("SlotSelect"))
 	interactables = require(script:WaitForChild("Interactables"))
 	quests = require(script:WaitForChild("Quests"))
 	regions = require(script:WaitForChild("Regions"))
@@ -245,6 +251,7 @@ local function setupUIs()
 	playerGUI:WaitForChild("OverworldUI").Enabled = true
 
 	interactables.setup()
+	slotSelect.setup()
 	regions.setup()
 	task.wait(0.25)
 	quests.setup()
@@ -258,6 +265,7 @@ local function setupUIs()
 
 	playerGUI:WaitForChild("OverworldUI").Enabled = true
 	playerGUI:WaitForChild("Interactables").Enabled = true
+	playerGUI:WaitForChild("SkillsMenu").Enabled = true
 	--if checkPlatform() ~= "Mobile" then
 	--	plr.PlayerScripts.Camera["TSC v1"].Enabled = true
 	--end
@@ -271,8 +279,100 @@ local function setupUIs()
 	--SceneDirector.Play(Scenes.Scene_DreamWorldIntro, true)
 end
 
+local LocalFightersMap = {}
+local LocalClonedFighters = {}
+
+local ActiveRing = nil
+local SpinConnection = nil
+
+local function getFloorYForRing(x, y, z)
+	local rayOrigin = Vector3.new(x, y + 10, z)
+	local rayDirection = Vector3.new(0, -50, 0)
+
+	local result = workspace:Raycast(rayOrigin, rayDirection, raycastParams)
+	if result then
+		return result.Position.Y
+	end
+	return y - 2.8 
+end
+
+local function handleRingVisuals(fighter) -- handles the selection ring behavior
+	if SpinConnection then SpinConnection:Disconnect() end
+	if ActiveRing then ActiveRing:Destroy() end
+	
+	local ringTemplate = Storage:FindFirstChild("Effects") and Storage.Effects:FindFirstChild("Combat") and Storage.Effects.Combat:FindFirstChild("Ring")
+	if not ringTemplate then
+		ringTemplate = Storage:FindFirstChild("Visuals") and Storage.Visuals:FindFirstChild("CombatRing")
+	end
+	
+	if not ringTemplate then return end
+	
+	ActiveRing = ringTemplate:Clone()
+	ActiveRing.Parent = fighter.Instance
+
+	SpinConnection = RS.Heartbeat:Connect(function()
+		if ActiveRing and fighter and fighter.Instance then
+			ActiveRing:PivotTo(ActiveRing:GetPivot() * CFrame.Angles(0, math.rad(2), 0))
+			
+			local pivot = fighter.Instance:GetPivot()
+			local floorY = getFloorYForRing(pivot.X, pivot.Y, pivot.Z)
+			
+			local floorCF = CFrame.new(pivot.X, floorY + 0.1, pivot.Z)
+			
+			ActiveRing:PivotTo(CFrame.new(floorCF.Position) * (ActiveRing:GetPivot() - ActiveRing:GetPivot().Position))
+		end
+	end)
+end
+
 -- Connections
 CombatReplicator.OnClientEvent:Connect(function(action, data)
+	if data and data.fightTable then
+		for _, f in ipairs(data.fightTable.AllFighters) do
+			if not f.Instance then
+				if not LocalFightersMap[f.ID] then
+					local existing = workspace.NPCS:FindFirstChild(f.ModelName)
+					if existing then
+						LocalFightersMap[f.ID] = existing
+					else
+						local template = Storage.Personas:FindFirstChild(f.ModelName) or Storage.NPCs:FindFirstChild(f.ModelName)
+						local newInst = template and template:Clone() or Instance.new("Model")
+						newInst.Name = "Enemy_" .. (f.ModelName or "Unknown")
+						newInst.Parent = workspace.PERSONAS
+						LocalFightersMap[f.ID] = newInst
+						table.insert(LocalClonedFighters, newInst)
+					end
+					
+					if f.SpawnCFrame then
+						LocalFightersMap[f.ID]:PivotTo(f.SpawnCFrame)
+					end
+				end
+				f.Instance = LocalFightersMap[f.ID]
+			end
+		end
+		
+		-- Due to Roblox network serialization, PlayerFighters and EnemyFighters are different memory objects than AllFighters.
+		if data.fightTable.PlayerFighters then
+			for _, f in ipairs(data.fightTable.PlayerFighters) do
+				if not f.Instance then f.Instance = LocalFightersMap[f.ID] end
+			end
+		end
+		if data.fightTable.EnemyFighters then
+			for _, f in ipairs(data.fightTable.EnemyFighters) do
+				if not f.Instance then f.Instance = LocalFightersMap[f.ID] end
+			end
+		end
+	end
+	if data and data.fighterData and not data.fighterData.Instance then
+		data.fighterData.Instance = LocalFightersMap[data.fighterData.ID]
+	end
+	if data and data.targets then
+		for _, t in ipairs(data.targets) do
+			if not t.Instance then
+				t.Instance = LocalFightersMap[t.ID]
+			end
+		end
+	end
+
 	if action == "start" then -- MAYBE LATER BETTER OPTIMIZATION BY PUTTING HEAVY STUFF TO DO HERE/SETUP ONCE THROUGHOUT THE FIGHT
 		overworldCamToggleEffectsEv:Fire(false, true)
 		harsherOverworldCamToggleEffectsEv:Fire(false)
@@ -282,11 +382,41 @@ CombatReplicator.OnClientEvent:Connect(function(action, data)
 		camRig.Parent = workspace
 		camRig:PivotTo(CFrame.new(0, 0, 0)) -- Start at origin
 		
+		script:SetAttribute("CurrentCamRig", camRig.Name) -- store reference if needed, or just let Maestro handle it
+		_G.CombatCamRig = camRig -- Quick global access for entranceAnimations
+		
 		CameraHandler.Initialize(data.fightTable.AllFighters)
 		Maestro.InitiateBattle(char, camRig, data.fightTable.AllFighters, char:GetPivot())
 		
+	elseif action == "endBattle" then
+		for _, inst in ipairs(LocalClonedFighters) do
+			if inst then inst:Destroy() end
+		end
+		table.clear(LocalFightersMap)
+		table.clear(LocalClonedFighters)
+		
+		if SpinConnection then SpinConnection:Disconnect() end
+		if ActiveRing then ActiveRing:Destroy() end
+		
+	elseif action == "promptBatonPass" then
+		-- Prompt the Baton Pass UI
+		if GUIMaster.PromptBatonPass then
+			GUIMaster.PromptBatonPass(data.fightTable)
+		else
+			-- Fallback: auto-pass to Timmy if he exists, otherwise self
+			local targetIdx = nil
+			for i, f in ipairs(data.fightTable.AllFighters) do
+				if f.IsNPC then targetIdx = i break end
+			end
+			CombatReplicator:FireServer("batonPass", targetIdx)
+		end
+		
 	elseif action == "turnStartUpdate" then -- AND HERE KEEP THE UI STUFF
 		CameraHandler.FocusOn(data.fighterData.Instance, 12.5)
+		
+		-- Ring Visuals
+		handleRingVisuals(data.fighterData)
+		
 	elseif action == "attackUpdate" then --- THIS IS WHERE THE FIGHTER DATA IS SENT TO THE CLIENT LIKE MAYBE WHEN A FIGHTER MAKES A MOVE I WANNA DISPLAY ON THE SCREEN
 		-- 1. Camera focuses on attacker (or general area if multiple targets)
 		-- We pass the whole target table to Maestro so it can decide how to position
@@ -375,6 +505,8 @@ CombatReplicator.OnClientEvent:Connect(function(action, data)
 		GUIMaster.CloseAllBattleUIs()
 		InputHandler.Stop()
 		Maestro.Cleanup()
+		if SpinConnection then SpinConnection:Disconnect() end
+		if ActiveRing then ActiveRing:Destroy() end
 		print("Combat ended!")
 		overworldCamToggleEffectsEv:Fire(true, true)
 		harsherOverworldCamToggleEffectsEv:Fire(true)

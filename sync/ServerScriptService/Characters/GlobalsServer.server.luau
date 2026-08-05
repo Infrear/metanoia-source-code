@@ -1,6 +1,7 @@
 	-- Services
 local UIS = game:GetService("UserInputService")
 local RPS = game:GetService("ReplicatedStorage")
+local SS = game:GetService("ServerStorage")
 local PLRS = game:GetService("Players")
 local TS = game:GetService("TweenService")
 
@@ -21,6 +22,44 @@ local npcIndex = require(Storage:WaitForChild("Info"):WaitForChild("NPCIndex"))
 
 local ListenerEvents = Events:WaitForChild("QuestListeners")
 
+-- Local Functions
+local function startBridgeCombat(plr)
+	local CombatManager = require(SS.Storage.Classes.CombatSystem.CombatManager)
+	local Fighter = require(SS.Storage.Classes.CombatSystem.Fighter)
+	local PersonaData = require(Storage.Classes.PersonaClientSide.PersonaData)
+	
+	-- prepare player fighter
+	local plrPersona = PersonaData.new("Angel")
+	local plrFighter = Fighter.new(plr.Character, {ActivePersona = plrPersona}, plr)
+	
+	-- prepare timmy fighter (Server passes string, Client renders)
+	local timmyPersona = PersonaData.new("Balloon")
+	local timmyFighter = Fighter.new("Timmy", {ActivePersona = timmyPersona}, nil) 
+	timmyFighter.IsNPC = true 
+	
+	-- prepare golem fighters
+	local enemyCount = 3 
+	local golems = {}
+
+	for i = 1, enemyCount do
+		local golemPersona = PersonaData.new("Golem")
+		local golemFighter = Fighter.new("Golem", {ActivePersona = golemPersona}, nil)
+		golemFighter.IsNPC = true
+		table.insert(golems, golemFighter)
+	end
+	
+	local splitParticipants = {
+		PlayersInvolved = {{PlayerObject = plr, FighterObject = plrFighter}},
+		PlayerFighters = {plrFighter, timmyFighter},
+		EnemyFighters = golems
+	}
+	
+	-- The Formations will be calculated inside InitializeBattle
+	CombatManager.InitializeBattle(splitParticipants, plr.Character:GetPivot())
+end
+
+-- (Removed getFormationOffsets as FormationCalculator handles this now)
+
 -- Connections
 questRem.OnServerEvent:Connect(function(plr, action, npcName, actionText --[[this is for actions or direct quest text]], extraParams)
 	if not odm.PlayerData then
@@ -37,7 +76,7 @@ questRem.OnServerEvent:Connect(function(plr, action, npcName, actionText --[[thi
 	end
 
 	--------------- MAIN REMOTES
-	if questInfo and action == "questRequest" then
+	if action == "questRequest" then
 		odm.PlayerData[plr].Data.Global:AddQuest(questInfo, npcName)
 		--questRem:FireClient(plr, odm.PlayerData[plr].Data) -- doesn't my class's code do this alr?
 	elseif action == "questRemove" then
@@ -48,6 +87,10 @@ questRem.OnServerEvent:Connect(function(plr, action, npcName, actionText --[[thi
 				completed = false
 			end
 			odm.PlayerData[plr].Data.Global:RemoveQuest(questInfo and questInfo.Text or actionText, completed, true)
+			
+			if questInfo and questInfo.Text == "Follow the strange boy" then
+				startBridgeCombat(plr)
+			end
 		end
 	elseif action == "actionRequest" and npcActionIndex.Actions[actionText] then -- prolly some sorta check here too
 		npcActionIndex.Actions[actionText](plr, table.unpack(extraParams))
@@ -63,6 +106,12 @@ questverifyRem.OnServerEvent:Connect(function(plr, action, ...)
 			local dist = (char:GetPivot().Position - destinationPart.Position).Magnitude
 			if dist <= 10 then -- server-side sanity check, don't just trust the client's claim
 				ListenerEvents.LocationReached:Fire(plr, destinationName)
+				
+				local qCurrent = odm.PlayerData[plr].Data.Global.Data.Quests.Current
+				if qCurrent["Follow the strange boy"] and destinationName == "StrangeBoyMeetPoint" then
+					odm.PlayerData[plr].Data.Global:RemoveQuest("Follow the strange boy", nil, true)
+					startBridgeCombat(plr)
+				end
 			end
 		end
 	end

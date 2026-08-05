@@ -262,10 +262,17 @@ function Maestro.Init(char, camRig, allFighters)
 			}
 
 			local thum = v.Instance:FindFirstChildOfClass("Humanoid") 
-			local tAnimator = thum and thum:FindFirstChildOfClass("Animator")
+			local tAnimator = (thum and thum:FindFirstChildOfClass("Animator")) or (v.Instance:FindFirstChildOfClass("AnimationController")  and v.Instance:FindFirstChildOfClass("AnimationController"):FindFirstChildOfClass("Animator"))
 
 			if tAnimator then
-				for _, anim in pairs((CombatAnims.Characters:FindFirstChild(v.Instance.Name) or CombatAnims.Characters.Joker):GetChildren()) do
+				-- Stop any overworld animations (like walking/idle from quests)
+				for _, track in ipairs(tAnimator:GetPlayingAnimationTracks()) do
+					track:Stop(0)
+				end
+				
+				local animFolder = (v.ModelName and CombatAnims.Characters:FindFirstChild(v.ModelName)) or CombatAnims.Characters:FindFirstChild(v.Instance.Name) or CombatAnims.Characters.Joker
+				
+				for _, anim in pairs(animFolder:GetChildren()) do
 					if anim:IsA("Animation") then
 						PreloadedAnims.Characters[v.Instance].CharacterAnims[anim.Name] = tAnimator:LoadAnimation(anim)
 					end
@@ -276,6 +283,9 @@ function Maestro.Init(char, camRig, allFighters)
 		else
 			PreloadedAnims.Characters[v.Instance] = {}
 			if v.Instance == char then
+				for _, track in ipairs(charAnimator:GetPlayingAnimationTracks()) do
+					track:Stop(0)
+				end
 				PreloadedAnims.Characters[v.Instance].CharacterAnims = {}
 				for _, anim in pairs(CombatAnims.Characters[currentCharacter]:GetChildren()) do
 					if anim:IsA("Animation") then
@@ -294,25 +304,40 @@ function Maestro.Init(char, camRig, allFighters)
 	end
 end
 
-function Maestro.PlayWalkIn(char, camRig, charAnimator, rAnimator)
-	---- Start Camera Rig Mode
-	--CameraHandler.SetToRig(camRig)
-
-	-- Play synced tracks using preloaded variables
-	local charTrack = playAnim(charAnimator, PreloadedAnims.Characters[char].CharacterAnims["Walk In Fight"])
-	local rigTrack = playAnim(rAnimator, PreloadedAnims.Camera["Walk In Fight"])
+function Maestro.PlayEntranceAnimations(camRig, allFighters)
+	local rigAnimator = camRig:WaitForChild("AnimationController"):WaitForChild("Animator")
+	local rigTrack = playAnim(rigAnimator, PreloadedAnims.Camera["Walk In Fight"])
 	local stopped = false
-
-	-- Wait for walk to finish
-	charTrack.Stopped:Once(function()
-		charTrack:Play(0, 1, 0)
-		charTrack.TimePosition = charTrack.Length - .000001
-		playAnim(charAnimator, PreloadedAnims.Characters[char].CharacterAnims["Fight Idle"], 0.1, true)
-		print("circling")
+	
+	for _, fighter in pairs(allFighters) do
+		local fighterChar = fighter.Instance
+		local animator = (fighterChar:FindFirstChildOfClass("Humanoid") and fighterChar:FindFirstChildOfClass("Humanoid"):FindFirstChildOfClass("Animator")) or fighterChar:FindFirstChildOfClass("AnimationController") and fighterChar:FindFirstChildOfClass("AnimationController"):FindFirstChildOfClass("Animator")
+		if animator and PreloadedAnims.Characters[fighterChar] and PreloadedAnims.Characters[fighterChar].CharacterAnims["Walk In Fight"] then
+			local charTrack = playAnim(animator, PreloadedAnims.Characters[fighterChar].CharacterAnims["Walk In Fight"])
+			if charTrack then
+				charTrack.Stopped:Once(function()
+					charTrack:Play(0, 1, 0)
+					charTrack.TimePosition = charTrack.Length - .000001
+					if PreloadedAnims.Characters[fighterChar].CharacterAnims["Fight Idle"] then
+						playAnim(animator, PreloadedAnims.Characters[fighterChar].CharacterAnims["Fight Idle"], 0.1, true)
+					end
+				end)
+			end
+		elseif animator and PreloadedAnims.Characters[fighterChar] and PreloadedAnims.Characters[fighterChar].CharacterAnims["Fight Idle"] then
+			-- Fallback to idle if no walk-in animation (for golems etc.)
+			playAnim(animator, PreloadedAnims.Characters[fighterChar].CharacterAnims["Fight Idle"], 0.1, true)
+		end
+	end
+	
+	if rigTrack then
+		rigTrack.Stopped:Once(function()
+			stopped = true
+		end)
+	else
+		task.wait(3.15)
 		stopped = true
-		--CameraHandler.Circle()
-	end)
-	repeat wait() until stopped
+	end
+	repeat task.wait() until stopped
 end
 
 function Maestro.InitiateBattle(char, camRig, allFighters, spawnPos)
@@ -342,9 +367,8 @@ function Maestro.InitiateBattle(char, camRig, allFighters, spawnPos)
 	coroutine.wrap(function()
 		task.wait(0.1)
 		ScreenHandler.LoadOut()
+		Maestro.PlayEntranceAnimations(camRig, allFighters)
 	end)()
-	-- 3. Clear the screen and start the walk
-	Maestro.PlayWalkIn(char, camRig, charAnimator, rigAnimator)
 end
 
 function Maestro.SummonPersona(chara, personaName)
@@ -358,8 +382,9 @@ function Maestro.SummonPersona(chara, personaName)
 	local personaModel = (PreloadedAnims.Characters[chara].CurrentPersona and PreloadedAnims.Characters[chara].CurrentPersona.Name == personaName) and PreloadedAnims.Characters[chara].CurrentPersona or Storage.Personas:FindFirstChild(personaName):Clone()
 	local animFolder = CombatAnims.Personas:FindFirstChild(personaName)
 
-	local charAnimator = chara.Humanoid.Animator
-	local pAnimator = personaModel:FindFirstChildOfClass("Humanoid").Animator or personaModel:FindFirstChildOfClass("AnimationController").Animator
+	local chum, pum = (chara:FindFirstChildOfClass("Humanoid") or chara:FindFirstChildOfClass("AnimationController")), (personaModel:FindFirstChildOfClass("Humanoid") or personaModel:FindFirstChildOfClass("AnimationController"))
+	local charAnimator = chum:FindFirstChildOfClass("Animator")
+	local pAnimator = pum:FindFirstChildOfClass("Animator")
 
 	PreloadedAnims.Characters[chara].CurrentPersona = personaModel
 
@@ -524,19 +549,31 @@ function Maestro.CienemateWindUp(char, atktype, fighterData, targets, isEnemy)
 			--	interuppted = true
 			--end)
 
-			local charAnimator = fighterData.Instance.Humanoid.Animator
-			--local pAnimator = PreloadedAnims.Characters[fighterData.Instance].CurrentPersona:FindFirstChildOfClass("Humanoid").Animator or PreloadedAnims.Characters[fighterData.Instance].CurrentPersona:FindFirstChildOfClass("AnimationController").Animator
+			local chum = fighterData.Instance:FindFirstChildOfClass("Humanoid") or fighterData.Instance:FindFirstChildOfClass("AnimationController") 
+			local charAnimator = chum:FindFirstChildOfClass("Animator")
 			local charAttack = playAnim(charAnimator, PreloadedAnims.Characters[fighterData.Instance].CharacterAnims["Use Persona"])
-			--if interuppted then return end
-			-- Return to base Fight Idle
-			--playAnim(pAnimator, PreloadedAnims.Characters[fighterData.Instance].Personas["Persona Attack"], 0)
 			
-			--print(fighterData.Instance)
-			--if fighterData.Instance == char then
+			local currentPersona = PreloadedAnims.Characters[fighterData.Instance].CurrentPersona
+			if currentPersona then
+				local pum = currentPersona:FindFirstChildOfClass("Humanoid") or currentPersona:FindFirstChildOfClass("AnimationController")
+				local pAnimator = pum:FindFirstChildOfClass("Animator")
+				local pAnims = PreloadedAnims.Characters[fighterData.Instance].Personas[currentPersona]
+				if pAnims and pAnims["Attack1"] then
+					playAnim(pAnimator, pAnims["Attack1"], 0.1)
+				end
+			end
+			
 			charAttack.Stopped:Once(function()
 				playAnim(charAnimator, PreloadedAnims.Characters[fighterData.Instance].CharacterAnims["Fight Idle"], 0.2, false)
+				if currentPersona then
+					local pum = currentPersona:FindFirstChildOfClass("Humanoid") or currentPersona:FindFirstChildOfClass("AnimationController")
+					local pAnimator = pum:FindFirstChildOfClass("Animator")
+					local pAnims = PreloadedAnims.Characters[fighterData.Instance].Personas[currentPersona]
+					if pAnims and pAnims["Idle"] then
+						playAnim(pAnimator, pAnims["Idle"], 0.2)
+					end
+				end
 			end)
-			--end
 		end
 	end
 end

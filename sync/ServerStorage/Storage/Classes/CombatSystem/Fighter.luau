@@ -6,7 +6,14 @@ Fighter.__index = Fighter
 function Fighter.new(model, personaData, playerOwner) -- declaration
 	local self = setmetatable({}, Fighter)
 
-	self.Instance = model
+	if typeof(model) == "string" then
+		self.ModelName = model
+		self.Instance = nil
+	else
+		self.Instance = model
+	end
+	
+	self.ID = game:GetService("HttpService"):GenerateGUID(false)
 	self.ActivePersona = personaData.ActivePersona
 	self.StoredPersonas = personaData.StoredPersonas or {personaData.ActivePersona}
 	self.PlayerOwner = playerOwner

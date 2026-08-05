@@ -70,6 +70,9 @@ end
 PLRS.PlayerAdded:Connect(function(plr)
 	-- On join, we DON'T initialize PlayerData immediately. 
 	-- We wait for the client to request slots and select one.
+	plr.CharacterAdded:Connect(function(char)
+		char.Parent = workspace.CHARACTERS
+	end)
 end)
 
 getProfileDataEv.OnServerInvoke = function(plr)

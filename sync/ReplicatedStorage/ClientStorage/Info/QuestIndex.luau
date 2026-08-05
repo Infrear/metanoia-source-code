@@ -128,7 +128,7 @@ local Quests = {
 			Object = "StrangeBoyMeetPoint", -- name your destination part/attribute this
 			QuestListener = "Location Listener",
 
-			TalkToComplete = true,
+			InstantCompleteOnLocation = true,
 			NextConvo = "Quest Return 1",
 		}
 	},
