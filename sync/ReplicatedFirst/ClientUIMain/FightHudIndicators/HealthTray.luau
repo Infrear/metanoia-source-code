@@ -76,6 +76,13 @@ local function buildRow(fighter, index)
 	row.LayoutOrder = index
 	row.Parent = trayFrame
 
+	local inner = Instance.new("Frame")
+	inner.Name = "Inner"
+	inner.BackgroundTransparency = 1
+	inner.Size = UDim2.new(1, 0, 1, 0)
+	inner.Position = UDim2.new(0, 0, 1.5, 0)
+	inner.Parent = row
+
 	local portrait = Instance.new("ImageLabel")
 	portrait.Name = "Portrait"
 	portrait.BackgroundTransparency = 1
@@ -84,7 +91,7 @@ local function buildRow(fighter, index)
 	portrait.AnchorPoint = Vector2.new(0, 0.5)
 	portrait.Image = fighter.PortraitId or ""
 	portrait.ScaleType = Enum.ScaleType.Fit
-	portrait.Parent = row
+	portrait.Parent = inner
 
 	local corner = Instance.new("UICorner")
 	corner.CornerRadius = UDim.new(1, 0)
@@ -95,7 +102,7 @@ local function buildRow(fighter, index)
 	infoHolder.BackgroundTransparency = 1
 	infoHolder.Size = UDim2.new(1, -34, 1, 0)
 	infoHolder.Position = UDim2.new(0, 34, 0, 0)
-	infoHolder.Parent = row
+	infoHolder.Parent = inner
 
 	local hpLabel = Instance.new("TextLabel")
 	hpLabel.Name = "HPLabel"
@@ -107,7 +114,10 @@ local function buildRow(fighter, index)
 	hpLabel.TextScaled = true
 	hpLabel.Font = Enum.Font.GothamBold
 	hpLabel.TextColor3 = Color3.fromRGB(255, 215, 120) -- gold, matching your established accent
-	hpLabel.Text = tostring(fighter.CurrentHP or fighter.MaxHP or "--")
+	-- Fighter objects use .HP, not .CurrentHP (that field doesn't exist on the real Fighter class --
+	-- this was always falling through to MaxHP, showing "full health" even after damage until Update
+	-- actually got called, which it never was -- see the attackUpdate wiring in ClientUIMain now)
+	hpLabel.Text = tostring(fighter.HP or fighter.MaxHP or "--")
 	hpLabel.Parent = infoHolder
 
 	local barBg = Instance.new("Frame")
@@ -150,7 +160,18 @@ function HealthTray.Init(fightTable)
 	local list = fightTable and fightTable.PlayerFighters or {}
 	for i, fighter in ipairs(list) do
 		if fighter.Instance then
-			rows[fighter.Instance] = buildRow(fighter, i)
+			local entry = buildRow(fighter, i)
+			rows[fighter.Instance] = entry
+			
+			local inner = entry.Row:FindFirstChild("Inner")
+			if inner then
+				task.delay((i * 0.08) / combatSettings.CombatSpeedMultiplier, function()
+					local t = TS:Create(inner, TweenInfo.new(0.4 / combatSettings.CombatSpeedMultiplier, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+						Position = UDim2.new(0, 0, 0, 0)
+					})
+					t:Play()
+				end)
+			end
 		end
 	end
 end

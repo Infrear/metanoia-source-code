@@ -26,6 +26,7 @@ local combatSettings = gameSettings.CombatSettings
 local AnimsManager = require(script.Parent.Parent.GUIMaster.Animations)
 
 local BattleMessage = {}
+local TES = {}
 
 -- CombatOverlays is the pending rename of SkillsMenu -- check both so this doesn't break
 -- the moment the rename happens (or before it does)
@@ -34,6 +35,8 @@ local function getOverlaysGui()
 end
 
 local messageFrame, textboxImg, textFrame, textLabel, charImg
+local baseSize = nil
+local textboxImgBaseSize = nil
 
 local function bindRefs()
 	if messageFrame and messageFrame.Parent then return end
@@ -43,25 +46,19 @@ local function bindRefs()
 	textFrame = textboxImg:WaitForChild("TextFrame")
 	textLabel = textFrame:WaitForChild("TextLabel")
 	charImg = messageFrame:WaitForChild("CharImg")
-end
-
--- UIScale drives the pulse so TextboxImg + CharImg scale together around the frame, instead of
--- fighting each other's independent Size properties
-local function getScaleObj()
-	local existing = messageFrame:FindFirstChildOfClass("UIScale")
-	if existing then return existing end
-	local s = Instance.new("UIScale")
-	s.Scale = 1
-	s.Parent = messageFrame
-	return s
+	
+	if not baseSize then
+		baseSize = messageFrame.Size
+		textboxImgBaseSize = textboxImg.Size
+	end
 end
 
 local PULSE_TWEEN_INFO = TweenInfo.new(
-	0.55/combatSettings.CombatSpeedMultiplier,
+	0.145/combatSettings.CombatSpeedMultiplier,
 	Enum.EasingStyle.Sine,
 	Enum.EasingDirection.InOut,
-	-1, -- loop forever until we :Cancel() it
-	true -- reverses back down, so it breathes in/out rather than snapping
+	0, -- single pulse, we handle loops manually now
+	true -- reverses back down
 )
 
 local activeToken = nil -- bumped every Show() call so old coroutines/tweens know to bail
@@ -73,9 +70,8 @@ function BattleMessage.Show(text, charImageId, duration)
 	activeToken = myToken
 
 	-- kill anything still running from a previous call
-	local scaleObj = getScaleObj()
-	for _, t in ipairs(TS:GetTweens()) do
-		if t.Instance == scaleObj or t.Instance == textboxImg or t.Instance == charImg then
+	for _, t in pairs(TES) do
+		if t.Instance == messageFrame or t.Instance == textboxImg or t.Instance == charImg then
 			t:Cancel()
 		end
 	end
@@ -85,34 +81,71 @@ function BattleMessage.Show(text, charImageId, duration)
 		charImg.Image = charImageId
 	end
 
-	scaleObj.Scale = 0.6
+	-- wide and flat initial state
+	messageFrame.Size = UDim2.new(
+		baseSize.X.Scale * 1.5, baseSize.X.Offset * 1.5,
+		baseSize.Y.Scale * 0.1, baseSize.Y.Offset * 0.1
+	)
 	textboxImg.ImageTransparency = 1
 	charImg.ImageTransparency = 1
 	messageFrame.Visible = true
 
-	-- Entrance: punch in with a quick overshoot-feeling fade + scale-up
-	local inTween = TS:Create(scaleObj, AnimsManager.STIS.FadeInMid or AnimsManager.STIS.FadeIn, {Scale = 1})
-	inTween:Play()
-	TS:Create(textboxImg, AnimsManager.STIS.FadeIn, {ImageTransparency = 0}):Play()
-	TS:Create(charImg, AnimsManager.STIS.FadeIn, {ImageTransparency = 0}):Play()
-	inTween.Completed:Wait()
+	-- Entrance: bounce in from wide/flat to regular
+	TES[messageFrame] = TS:Create(messageFrame, TweenInfo.new(0.4/combatSettings.CombatSpeedMultiplier, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Size = baseSize})
+	TES[messageFrame]:Play()
+	TES[textboxImg] = TS:Create(textboxImg, AnimsManager.STIS.FadeIn, {ImageTransparency = 0})
+	TES[textboxImg]:Play()
+	TES[charImg] = TS:Create(charImg, AnimsManager.STIS.FadeIn, {ImageTransparency = 0})
+	TES[charImg]:Play()
+	TES[messageFrame].Completed:Wait()
 
 	if activeToken ~= myToken then return end -- a newer Show() call took over while we waited
 
-	-- Continuous gentle breathing pulse until dismissed
-	local pulseTween = TS:Create(scaleObj, PULSE_TWEEN_INFO, {Scale = 1.08})
-	pulseTween:Play()
+	-- Ensure textboxImg starts at its normal size before custom pulsing begins
+	textboxImg.Size = textboxImgBaseSize
+	
+	-- Custom irregular pulsing loop on just the textboxImg
+	coroutine.wrap(function()
+		local targetPulseSize = UDim2.fromScale(
+			textboxImgBaseSize.X.Scale * 1.035,
+			textboxImgBaseSize.Y.Scale * 1
+		)
+		
+		while activeToken == myToken do
+			-- Faster, random intervals (0.5 to 1.2 seconds)
+			task.wait((math.random(1, 5)/2.5) / 10 / combatSettings.CombatSpeedMultiplier)
+			if activeToken ~= myToken then break end
+			
+			local pulses = math.random(1, 2)
+			for i = 1, pulses do
+				if activeToken ~= myToken then break end
+				
+				local pulseTween = TS:Create(textboxImg, PULSE_TWEEN_INFO, {Size = targetPulseSize})
+				TES[textboxImg] = pulseTween
+				pulseTween:Play()
+				pulseTween.Completed:Wait()
+				
+				if i < pulses and activeToken == myToken then
+					task.wait(0.1 / combatSettings.CombatSpeedMultiplier) -- short gap between double-pulses
+				end
+			end
+		end
+	end)()
 
-	task.delay((duration or 2.5)/combatSettings.CombatSpeedMultiplier, function()
+	task.delay((duration or 4.0)/combatSettings.CombatSpeedMultiplier, function()
 		if activeToken ~= myToken then return end -- superseded, let the newer one own cleanup
 
-		pulseTween:Cancel()
+		TES[messageFrame]:Cancel()
 
-		local outTween = TS:Create(scaleObj, AnimsManager.STIS.FadeIn, {Scale = 0.7})
-		outTween:Play()
-		TS:Create(textboxImg, AnimsManager.STIS.FadeIn, {ImageTransparency = 1}):Play()
-		TS:Create(charImg, AnimsManager.STIS.FadeIn, {ImageTransparency = 1}):Play()
-		outTween.Completed:Wait()
+		TES[messageFrame] = TS:Create(messageFrame, AnimsManager.STIS.FadeIn, {
+			Size = UDim2.new(baseSize.X.Scale * 0.7, baseSize.X.Offset * 0.7, baseSize.Y.Scale * 0.7, baseSize.Y.Offset * 0.7)
+		})
+		TES[messageFrame]:Play()
+		TES[textboxImg] = TS:Create(textboxImg, AnimsManager.STIS.FadeIn, {ImageTransparency = 1})
+		TES[textboxImg]:Play()
+		TES[charImg] = TS:Create(charImg, AnimsManager.STIS.FadeIn, {ImageTransparency = 1})
+		TES[charImg]:Play()
+		TES[messageFrame].Completed:Wait()
 
 		if activeToken == myToken then
 			messageFrame.Visible = false

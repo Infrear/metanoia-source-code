@@ -592,6 +592,8 @@ function Maestro.Init(char, camRig, allFighters)
 						PreloadedAnims.Characters[v.Instance].CharacterAnims[anim.Name] = charAnimator:LoadAnimation(anim)
 					end
 				end
+				
+				playAnim(charAnimator, PreloadedAnims.Characters[v.Instance].CharacterAnims["Fight Idle"], 0.2, false)
 
 				-- Pre-stage the player's bonded persona hidden inside them while the screen's still
 				-- covered, same trick as the enemy/NPC fighters above -- so the FIRST time they open
@@ -633,6 +635,8 @@ function Maestro.Init(char, camRig, allFighters)
 end
 
 function Maestro.PlayEntranceAnimations(camRig, allFighters)
+	FightHudIndicators.BattleMessage.Show("BATTLE START!")
+	
 	local rigAnimator = camRig:WaitForChild("AnimationController"):WaitForChild("Animator")
 	local rigTrack = playAnim(rigAnimator, PreloadedAnims.Camera["Walk In Fight"])
 	local stopped = false
@@ -645,22 +649,31 @@ function Maestro.PlayEntranceAnimations(camRig, allFighters)
 		return fighter.ActivePersona and not fighter.IsWildPersona and fighter.Instance ~= char and not PLRS:GetPlayerFromCharacter(fighter.Instance)
 	end
 
+	-- Tracks in-flight auto-summons (Timmy etc.) so this function can't return -- and let anything
+	-- downstream (like CombatStoryline's OnBattleStart dialogue, which plays its own animation
+	-- directly via hum:LoadAnimation) touch these fighters -- until they've actually finished
+	-- materializing. Before this, PlayEntranceAnimations only waited on the CAMERA's walk-in, so
+	-- dialogue could fire and stomp an NPC's animator mid-summon, which is why Timmy's animation
+	-- looked like it "didn't play" -- it was playing, then got immediately overridden.
+	local pendingAutoSummons = 0
+
 	for _, fighter in pairs(allFighters) do
 		local fighterChar = fighter.Instance
 		local animator = (fighterChar:FindFirstChildOfClass("Humanoid") and fighterChar:FindFirstChildOfClass("Humanoid"):FindFirstChildOfClass("Animator")) or fighterChar:FindFirstChildOfClass("AnimationController") and fighterChar:FindFirstChildOfClass("AnimationController"):FindFirstChildOfClass("Animator")
 		local anims = PreloadedAnims.Characters[fighterChar] and PreloadedAnims.Characters[fighterChar].CharacterAnims
 
 		if animator and anims and anims["Walk In Fight"] then
-			local charTrack = playAnim(animator, anims["Walk In Fight"])
+			local charTrack = anims["Walk In Fight"]
+			charTrack:Play(0.1)
 			if charTrack then
+				local isAutoSummon = isAutoSummonFighter(fighter)
+				if isAutoSummon then
+					pendingAutoSummons += 1
+				end
 				charTrack.Stopped:Once(function()
-					-- just transition straight to idle (or the auto-summon) -- no need to freeze/replay
-					-- the walk-in track first, that hack held the walk-in track at weight 1 forever
-					-- since speed 0 means it never actually finishes and clears itself
-					if isAutoSummonFighter(fighter) then
+					if isAutoSummon then
 						Maestro.SummonPersona(fighterChar, fighter.ActivePersona.Name)
-					elseif anims["Fight Idle"] then
-						playAnim(animator, anims["Fight Idle"], 0.15, true)
+						pendingAutoSummons -= 1
 					end
 				end)
 			end
@@ -701,7 +714,7 @@ function Maestro.PlayEntranceAnimations(camRig, allFighters)
 		end
 		stopped = true
 	end
-	repeat task.wait() until stopped
+	repeat task.wait() until stopped and pendingAutoSummons <= 0
 end
 
 function Maestro.InitiateBattle(char, camRig, fightTable, spawnPos, LocalFightersMap, LocalClonedFighters)
@@ -795,16 +808,13 @@ function Maestro.InitiateBattle(char, camRig, fightTable, spawnPos, LocalFighter
 	ScreenHandler.LoadOut()
 
 	coroutine.wrap(function()
-		print("1")
 		Maestro.PlayEntranceAnimations(camRig, allFighters)
-print("2")
 		-- Tutorial-fight banter (if this battle was given a StorylineConfig) plays after the walk-in
 		-- is fully done, and WaitForClear() holds the "entranceComplete" ack (and therefore the first
 		-- turn) until the player's actually clicked all the way through it
 		FightHudIndicators.CombatStoryline.OnBattleStart()
-		print("3")
-		FightHudIndicators.CombatStoryline.WaitForClear()
-print("okay")
+		--print("3")
+		--FightHudIndicators.CombatStoryline.WaitForClear()
 		-- Tell the server the entrance sequence (cloning, animation loading, camera walk-in) is
 		-- actually done, instead of it guessing a fixed wait time -- that guess was too short
 		-- whenever this fight had more/heavier stuff to load, so turnStartUpdate would fire and
@@ -963,13 +973,13 @@ function Maestro.RetrievePersona(chara)
 
 		local TE = nil
 		if hl then
-			TE1 = TS:Create(hl, AnimsManager.STIS[3], {FillTransparency = 1, OutlineTransparency = 1})
-			TE1:Play()
+			TE = TS:Create(hl, AnimsManager.STIS[3], {FillTransparency = 1, OutlineTransparency = 1})
+			TE:Play()
 		end
 
 		local con1
 		if hl then
-			con1 = TE1.Completed:Once(function()
+			con1 = TE.Completed:Once(function()
 				hl:Destroy()
 			end)
 		end

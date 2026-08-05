@@ -21,4 +21,26 @@ FightHudIndicators.BattleMessage = require(script:WaitForChild("BattleMessage"))
 FightHudIndicators.AbilityAnnouncement = require(script:WaitForChild("AbilityAnnouncement"))
 FightHudIndicators.HealthTray = require(script:WaitForChild("HealthTray"))
 
+function FightHudIndicators.Init()
+	local plr = game:GetService("Players").LocalPlayer
+	local plrGui = plr:WaitForChild("PlayerGui")
+	local overlaysGui = plrGui:FindFirstChild("CombatOverlays") or plrGui:WaitForChild("SkillsMenu")
+	local holder = overlaysGui:WaitForChild("Holder")
+	
+	local healthTray = holder:FindFirstChild("Healthbar Tray")
+	if healthTray then
+		healthTray.BackgroundTransparency = 1
+	end
+	
+	local messageFrame = holder:FindFirstChild("Message")
+	if messageFrame then
+		messageFrame.Visible = false
+	end
+	
+	local extraButtons = holder:FindFirstChild("Extra Buttons") or holder:FindFirstChild("ExtraButtons")
+	if extraButtons then
+		extraButtons.Visible = false
+	end
+end
+
 return FightHudIndicators

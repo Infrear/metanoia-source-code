@@ -266,7 +266,6 @@ local function setupUIs()
 
 	playerGUI:WaitForChild("OverworldUI").Enabled = true
 	playerGUI:WaitForChild("Interactables").Enabled = true
-	playerGUI:WaitForChild("SkillsMenu").Enabled = true
 	--if checkPlatform() ~= "Mobile" then
 	--	plr.PlayerScripts.Camera["TSC v1"].Enabled = true
 	--end
@@ -401,6 +400,9 @@ CombatReplicator.OnClientEvent:Connect(function(action, data)
 		script:SetAttribute("CurrentCamRig", camRig.Name) -- store reference if needed, or just let Maestro handle it
 		_G.CombatCamRig = camRig -- Quick global access for entranceAnimations
 		
+		FightHudIndicators.Init()
+		playerGUI:WaitForChild("SkillsMenu").Enabled = true
+		
 		Maestro.InitiateBattle(char, camRig, data.fightTable, char:GetPivot(), LocalFightersMap, LocalClonedFighters)
 		
 	elseif action == "endBattle" then
@@ -443,11 +445,30 @@ CombatReplicator.OnClientEvent:Connect(function(action, data)
 		handleRingVisuals(data.fighterData)
 		
 	elseif action == "attackUpdate" then --- THIS IS WHERE THE FIGHTER DATA IS SENT TO THE CLIENT LIKE MAYBE WHEN A FIGHTER MAKES A MOVE I WANNA DISPLAY ON THE SCREEN
+		-- HP already changed server-side (TakeImpact happens before this fires), so refresh the
+		-- health tray immediately rather than tying it to any of the windup/camera timing below --
+		-- HealthTray.Update was defined but never actually called anywhere, so the bars built at
+		-- battle start just sat frozen at their starting values all fight.
+		if data.targets then
+			for _, target in ipairs(data.targets) do
+				if target.Instance then
+					FightHudIndicators.HealthTray.Update(target.Instance, target.HP, target.MaxHP)
+				end
+			end
+		end
+
 		-- 1. Camera focuses on attacker (or general area if multiple targets)
 		-- We pass the whole target table to Maestro so it can decide how to position
 		local speedMult = (plr:GetAttribute("CurrentCombatSpeedMultiplier") or 1)
 		-- BUG FIX: Check if Skill exists in library before indexing CameraInfo
 		local skillData = SkillLibrary.List[data.skill]
+		
+		-- [TESTING]: Show the ability announcement for any skill so we can test the UI!
+		--if data.attackType == "Skill" and skillData then
+		--	local fighterName = data.fighterData.DisplayName or data.fighterData.Instance.Name
+		--	local skillDisplayName = skillData.Name or data.skill
+		--	FightHudIndicators.AbilityAnnouncement.Show(fighterName .. " uses " .. skillDisplayName .. "!", {Duration = 2.5, ShakeIntensity = 3})
+		--end
 			
 		if data.windUp then
 			coroutine.wrap(function()

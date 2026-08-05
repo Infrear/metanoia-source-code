@@ -26,7 +26,7 @@ local cam = workspace.CurrentCamera
 local ui = playerGUI:WaitForChild("GlobalUI")
 local mainFrames = ui:WaitForChild("Chatbars")
 local charbar = mainFrames:WaitForChild("CharChatbar")
-local defbar = mainFrames:WaitForChild("CharChatbar") -- TODO: swap to real "DefChatbar" once the text-only bar is built; currently aliased to charbar
+local defbar = mainFrames:WaitForChild("DefChatbar") -- TODO: swap to real "DefChatbar" once the text-only bar is built; currently aliased to charbar
 local thinkbar = mainFrames:WaitForChild("ThinkChatbar")
 local personFrame = mainFrames:WaitForChild("Person")
 local blackoutFrame = mainFrames:WaitForChild("Blackout")
@@ -37,7 +37,24 @@ local blackoutFrame = mainFrames:WaitForChild("Blackout")
 -- Migrated from the standalone CHARCHATBAR.lua / THINKCHATBAR.lua scripts.
 -- -------------------------------------------------------------
 local SPRITE_CONFIGS = {
-
+	-- -- DefChatbar (TODO: text-only bar, no character portrait) --
+	-- For now this is a copy of the charbar config since defbar = charbar.
+	-- When DefChatbar gets its own UI element, add its own imageIds / layout here.
+	-- JUST DID IT :)
+	defbar = {
+		imageIds = {
+			"rbxassetid://115123812554643", -- Sheet/Frame 1
+			"rbxassetid://87057529454562", -- Sheet/Frame 2
+			"rbxassetid://99673775358754",
+			"rbxassetid://103795823545552",
+		},
+		rows       = 4,
+		columns    = 1,
+		framerate  = 6.5,
+		
+		clipsDescendants = true,
+	},
+	
 	-- -- CharChatbar / DefChatbar (shared, 4-frame loop) ----------
 	-- Originally lived in CHARCHATBAR.lua
 	charbar = {
@@ -80,11 +97,6 @@ local SPRITE_CONFIGS = {
 		framerate = nil, -- set dynamically
 		clipsDescendants = true,
 	},
-
-	-- -- DefChatbar (TODO: text-only bar, no character portrait) --
-	-- For now this is a copy of the charbar config since defbar = charbar.
-	-- When DefChatbar gets its own UI element, add its own imageIds / layout here.
-	defbar = nil, -- TODO: fill in once DefChatbar is a real separate UI element
 }
 
 -- -------------------------------------------------------------
@@ -185,8 +197,6 @@ local BAR_SETTINGS = {
 	},
 	[defbar] = {
 		OGSecSize = defbar.Secondary.Size,
-		OGImgPos = defbar.CharacterVPF.Position,
-		OGImgTransparency = defbar.CharacterVPF.ImageTransparency,
 		OGArrowSize = defbar.Secondary.ContentFrame.Arrow.Size,
 		OGArrowRotation = defbar.Secondary.ContentFrame.Arrow.Rotation,
 	},
@@ -333,10 +343,11 @@ local function initSpriteSheets()
 		if not cfg then continue end
 
 		-- IMPORTANT: defbar == charbar right now, skip to avoid a double grid
-		if barName == "defbar" then continue end -- TODO: remove once DefChatbar is its own element
+		--if barName == "defbar" then continue end -- TODO: remove once DefChatbar is its own element
+		-- implemented now :)
 
 		local barObj = (barName == "charbar" and charbar)
-			or (barName == "thinkbar" and thinkbar)
+			or (barName == "thinkbar" and thinkbar) or (barName == "defbar" and defbar)
 
 		local warper = barObj.Secondary:FindFirstChild("Warper")
 		if not warper then
@@ -826,7 +837,6 @@ function NPCM.runNPC(npcObject, givenDialogue, displayName, overrideDilog) -- di
 			tframe = nil
 		else
 			bar = defbar
-			tframe = bar.Secondary.TitleFrame
 		end
 
 		secondary = bar:FindFirstChild("Secondary")
@@ -1189,7 +1199,7 @@ function NPCM.setup()
 	-- IMPORTANT: initSpriteSheets() must run before any chatbar opens,
 	-- so call NPCM.setup() early (e.g. in your top-level LocalScript init).
 
-	defbar.CharacterVPF.Visible = true
+	charbar.CharacterVPF.Visible = true
 	-- preloading
 	for bar, v in pairs(BAR_SETTINGS) do
 		if typeof(bar) == 'Instance' and bar:IsA("Frame") then
@@ -1203,8 +1213,8 @@ function NPCM.setup()
 	end
 	--
 	
-	defbar.CharacterVPF.Position = UDim2.fromScale(BAR_SETTINGS[defbar].OGImgPos.X.Scale - 0.1, BAR_SETTINGS[defbar].OGImgPos.Y.Scale)
-	defbar.CharacterVPF.ImageTransparency = 1
+	charbar.CharacterVPF.Position = UDim2.fromScale(BAR_SETTINGS[charbar].OGImgPos.X.Scale - 0.1, BAR_SETTINGS[charbar].OGImgPos.Y.Scale)
+	charbar.CharacterVPF.ImageTransparency = 1
 
 	personFrame.Position = BAR_SETTINGS.PersonStartOut
 	
