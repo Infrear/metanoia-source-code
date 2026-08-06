@@ -61,7 +61,15 @@ local PULSE_TWEEN_INFO = TweenInfo.new(
 	true -- reverses back down
 )
 
-local activeToken = nil -- bumped every Show() call so old coroutines/tweens know to bail
+function BattleMessage.Preload()
+	bindRefs()
+	local assets = {}
+	if textboxImg then table.insert(assets, textboxImg) end
+	if charImg then table.insert(assets, charImg) end
+	if #assets > 0 then
+		game:GetService("ContentProvider"):PreloadAsync(assets)
+	end
+end
 
 function BattleMessage.Show(text, charImageId, duration)
 	bindRefs()
@@ -77,6 +85,7 @@ function BattleMessage.Show(text, charImageId, duration)
 	end
 
 	textLabel.Text = text or ""
+	textLabel.MaxVisibleGraphemes = 0
 	if charImageId then
 		charImg.Image = charImageId
 	end
@@ -100,6 +109,19 @@ function BattleMessage.Show(text, charImageId, duration)
 	TES[messageFrame].Completed:Wait()
 
 	if activeToken ~= myToken then return end -- a newer Show() call took over while we waited
+	
+	-- Typewriter effect
+	coroutine.wrap(function()
+		local len = utf8.len(textLabel.ContentText or textLabel.Text) or string.len(textLabel.Text)
+		for i = 1, len do
+			if activeToken ~= myToken then break end
+			textLabel.MaxVisibleGraphemes = i
+			task.wait(0.015)
+		end
+		if activeToken == myToken then
+			textLabel.MaxVisibleGraphemes = -1
+		end
+	end)()
 
 	-- Ensure textboxImg starts at its normal size before custom pulsing begins
 	textboxImg.Size = textboxImgBaseSize

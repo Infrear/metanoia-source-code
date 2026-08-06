@@ -189,9 +189,18 @@ function CombatManager.ExecuteSkill(attacker, targets, skillName, fightTable) --
 	local windUp = true
 	
 	for i, target in pairs(targets) do
-		-- apply impact & check for weakness
 		local oldHealth = target.HP
-		local result = target:TakeImpact(baseDamage, skill.Element)
+		local result
+		
+		if skill.TargetType == "Allies" or skill.TargetType == "Self" then
+			-- healing path -- adds HP, clamped to MaxHP
+			target.HP = math.min(target.MaxHP, target.HP + baseDamage)
+			result = "HEAL"
+		else
+			-- damage path
+			result = target:TakeImpact(baseDamage, skill.Element)
+		end
+		
 		results[target] = result
 		oldHealths[oldHealth] = oldHealth
 

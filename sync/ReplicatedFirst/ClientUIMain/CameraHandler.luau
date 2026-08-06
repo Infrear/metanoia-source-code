@@ -130,48 +130,51 @@ function CameraManager.Circle(focalPoint, force, targetInstance) -- Added target
 				end
 			end
 
-			local targetCF
-			
-			--print(CameraManager.IdlePhase)
-			--print(CameraManager.CurrentMaxTime)
-			
+			-- rig orientation: LookVector points from player TOWARD enemies
+			-- so -LookVector = behind player, +LookVector = toward enemy side
+			local rigCF = CameraManager.CurrentRig and CameraManager.CurrentRig:GetPivot() or CFrame.new(center)
+			local right   = rigCF.RightVector
+			local forward = rigCF.LookVector
+			local up      = Vector3.new(0, 1, 0)
+
 			if CameraManager.IdlePhase == 1 then
-				-- MODE 1: THE ORBIT
+				-- MODE 1: THE ORBIT (arena-relative ellipse)
 				CameraManager.OrbitAngle += dt * 0.12
-				local offset = Vector3.new(
-					math.cos(CameraManager.OrbitAngle) * 15, 
-					5 + (math.sin(tick()) * 1), -- Slight vertical bobbing
-					math.sin(CameraManager.OrbitAngle) * 50
-				)
-				targetCF = CFrame.new(center + offset, center)
+				local localX = math.cos(CameraManager.OrbitAngle) * 15
+				local localY = 5 + (math.sin(tick()) * 1) -- slight vertical bobbing
+				local localZ = math.sin(CameraManager.OrbitAngle) * 50
+				local worldOffset = right * localX + up * localY + forward * (-localZ)
+				targetCF = CFrame.new(center + worldOffset, center)
 
 			elseif CameraManager.IdlePhase == 2 then
-				-- MODE 2: LINEAR PAN (Side A to B)
+				-- MODE 2: PAN behind the player team (arena-relative)
 				local alpha = ((CameraManager.PhaseTimer / CameraManager.CurrentMaxTime)/gameSettings.CombatSettings.CombatSpeedMultiplier) / (plr:GetAttribute("CurrentCombatSpeedMultiplier") or 1)
-				local startPos = center + Vector3.new(-15, 8, 20)
-				local endPos = center + Vector3.new(15, 12, 20)
-
+				-- behind player = -forward, panning left-to-right
+				local startPos = center + right * (-15) + up * 8  + forward * (-20)
+				local endPos   = center + right * ( 15) + up * 12 + forward * (-20)
 				local currentPos = startPos:Lerp(endPos, alpha)
 				targetCF = CFrame.new(currentPos, center)
 
 			elseif CameraManager.IdlePhase == 3 then
-				-- MODE 3: LINEAR PAN (Side B to A, different angle)
+				-- MODE 3: PAN from the enemy side, looking back at team (arena-relative)
 				local alpha = ((CameraManager.PhaseTimer / CameraManager.CurrentMaxTime)/gameSettings.CombatSettings.CombatSpeedMultiplier) / (plr:GetAttribute("CurrentCombatSpeedMultiplier") or 1)
-				local startPos = center + Vector3.new(20, 10, -15)
-				local endPos = center + Vector3.new(-20, 6, -15)
-
+				-- enemy side = +forward
+				local startPos = center + right * ( 20) + up * 10 + forward * 15
+				local endPos   = center + right * (-20) + up * 6  + forward * 15
 				local currentPos = startPos:Lerp(endPos, alpha)
 				targetCF = CFrame.new(currentPos, center)
 
 			elseif CameraManager.IdlePhase == 4 then
-				-- MODE 4: LINEAR PAN (Side B to A, different angle)
+				-- MODE 4: HOVER / SLIDE behind the rig (arena-relative)
 				local alpha = ((CameraManager.PhaseTimer / CameraManager.CurrentMaxTime)/gameSettings.CombatSettings.CombatSpeedMultiplier) / (plr:GetAttribute("CurrentCombatSpeedMultiplier") or 1)
 				center = CameraManager.CurrentRig and CameraManager.CurrentRig:GetPivot().Position or center
-				local startPos = CFrame.new(center + Vector3.new(5, 3.5, 12.5), center)
-				local endPos = startPos * CFrame.new(15, 0, 0)
-
-				local currentPos = startPos:Lerp(endPos, alpha)
-				targetCF = currentPos --CFrame.new(currentPos, center)
+				-- behind player, offset slightly right and above
+				local anchorOffset = right * 5 + up * 3.5 + forward * (-12.5)
+				local startCF = CFrame.new(center + anchorOffset, center)
+				-- slide along rig's right axis
+				local endCF = startCF * CFrame.new(15, 0, 0)
+				local currentPos = startCF:Lerp(endCF, alpha)
+				targetCF = currentPos
 			end
 
 			if CameraManager.IsTransitioning or CameraManager.Transitioned then
@@ -224,11 +227,30 @@ function CameraManager.Initialize(participants, manualCenter)
 	if workspace.StreamingEnabled then
 		plr:RequestStreamAroundAsync(CameraManager.CenterPoint)
 	end
+	
+	-- DEBUG CENTER MARKER
+	local existingMarker = workspace:FindFirstChild("DebugCenterMarker")
+	if existingMarker then existingMarker:Destroy() end
+	local marker = Instance.new("Part")
+	marker.Name = "DebugCenterMarker"
+	marker.Shape = Enum.PartType.Cylinder
+	marker.Size = Vector3.new(0.5, 4, 4)
+	marker.Color = Color3.new(1, 0, 0)
+	marker.Material = Enum.Material.Neon
+	marker.Anchored = true
+	marker.CanCollide = false
+	marker.CFrame = CFrame.new(CameraManager.CenterPoint) * CFrame.Angles(0, 0, math.rad(90))
+	marker.Parent = workspace
+	
 	--CameraManager.Circle()
 end
 
-function CameraManager.FocusOn(targetInstance, zoomIn, offsetPreset, extraOffset, TIName)
+-- enemyPOV: if true, places the camera on the player-team side of the target, looking outward
+-- (i.e. the camera sees the target from behind the player, like an "enemy watching the hero" shot)
+-- originInstance: if provided (during an attack), places the camera along the axis from the attacker to the target.
+function CameraManager.FocusOn(targetInstance, zoomIn, offsetPreset, extraOffset, TIName, enemyPOV, originInstance)
 	unbindAllBinds()
+	
 	if CameraManager.LastCCSM ~= plr:GetAttribute("CurrentCombatSpeedMultiplier") then
 		CameraManager.LastCCSM = plr:GetAttribute("CurrentCombatSpeedMultiplier")
 		for i, v in pairs(CameraManager.BASE_TIS) do
@@ -255,9 +277,35 @@ function CameraManager.FocusOn(targetInstance, zoomIn, offsetPreset, extraOffset
 	
 	local camPos = nil 
 	if offsetPreset then
-		camPos = targetPos + (((offsetPreset.NegativeOffset and -1 or 1) * targetInstance:GetPivot()[offsetPreset.OffsetDirection or "LookVector"]) * offset) + Vector3.new(0, 2, 0) + (offsetPreset.PosOffset or Vector3.new())
+		local forwardAxis = targetInstance:GetPivot().LookVector
+		local offsetDir = offsetPreset.OffsetDirection or "LookVector"
+		-- Use the rig's true forward axis instead of the character's local one so the camera isn't crooked
+		if offsetDir == "LookVector" and CameraManager.CurrentRig then
+			forwardAxis = CameraManager.CurrentRig:GetPivot().LookVector
+		elseif offsetDir == "RightVector" and CameraManager.CurrentRig then
+			forwardAxis = CameraManager.CurrentRig:GetPivot().RightVector
+		end
+		
+		camPos = targetPos + (((offsetPreset.NegativeOffset and -1 or 1) * forwardAxis) * offset) + Vector3.new(0, 2, 0) + (offsetPreset.PosOffset or Vector3.new())
 	else
-		camPos = targetPos + (targetInstance:GetPivot().LookVector * offset) + Vector3.new(0, 2, 0)
+		local toTargetUnit
+		if originInstance then
+			-- Attack camera: Frame the shot along the line from the Attacker to the Target.
+			-- (origin - targetPos) points from the Target backwards to the Attacker,
+			-- placing the camera on the Attacker's side (an over-the-shoulder POV).
+			local toOrigin = originInstance:GetPivot().Position - targetPos
+			toTargetUnit = toOrigin.Magnitude > 0.01 and toOrigin.Unit or Vector3.new(0, 0, 1)
+		else
+			-- Target selection / Turn Start camera: 
+			-- By using the negative LookVector, we ensure the camera is ALWAYS placed on the Player's side
+			-- of the arena (behind players, in front of enemies), giving a perfect over-the-shoulder view.
+			toTargetUnit = CameraManager.CurrentRig and -CameraManager.CurrentRig:GetPivot().LookVector or Vector3.new(0, 0, 1)
+		end
+		
+		-- flip direction when enemyPOV: camera sits on enemy side looking back at player team
+		local dirMult = enemyPOV and -1 or 1
+		-- height scales with zoom offset to prevent looking up from the floor
+		camPos = targetPos + (toTargetUnit * offset * dirMult) + Vector3.new(0, math.max(8, offset * 0.35), 0)
 	end
 	
 	local finalCF = ((offsetPreset and offsetPreset.BaseOffset) or CFrame.new(camPos, targetPos)) * (offsetPreset and offsetPreset.RotOffset or CFrame.new()) * (offsetPreset and offsetPreset.CFOffset or CFrame.new())
@@ -330,5 +378,6 @@ function CameraManager.BattleIntroPunch()
 	settleTween:Play()
 	settleTween.Completed:Wait()
 end
+
 
 return CameraManager

@@ -227,7 +227,9 @@ function GUIMaster.FocusCamOnTarget(instance, pos, shouldDelay)
 	--print(relativeCF.Position)
 	local lerped = CFrame.new(0, 0, 0):Lerp(relativeCF, 0.5)
 
-	CameraHandler.FocusOn(instance, 20, nil, lerped, "Mid Zoom")
+	-- Removed 'lerped' from extraOffset because it was applying a world-space difference as a local-space offset,
+	-- causing the camera to veer wildly to the side when selecting teammates.
+	CameraHandler.FocusOn(instance, 20, nil, nil, "Mid Zoom")
 	if con then con:Disconnect() end
 end
 

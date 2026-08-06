@@ -16,12 +16,15 @@ function SimpleAI.GetDecision(striker, fightTable)
 	local potentialTargets = {}
 
 	if skillData.TargetType == "Enemies" then
-		-- AI assumes Players are the enemies
-		potentialTargets = fightTable.PlayerFighters
+		-- ai targets the opposite side from itself
+		local strikerIsPlayer = table.find(fightTable.PlayerFighters, striker) ~= nil
+		potentialTargets = strikerIsPlayer and fightTable.EnemyFighters or fightTable.PlayerFighters
 	elseif skillData.TargetType == "Any" then
 		potentialTargets = fightTable.AllFighters
 	elseif skillData.TargetType == "Allies" then
-		potentialTargets = fightTable.EnemyFighters
+		-- ai heals/buffs the same side as itself
+		local strikerIsPlayer = table.find(fightTable.PlayerFighters, striker) ~= nil
+		potentialTargets = strikerIsPlayer and fightTable.PlayerFighters or fightTable.EnemyFighters
 	elseif skillData.TargetType == "Self" then
 		table.insert(targets, striker)
 	end

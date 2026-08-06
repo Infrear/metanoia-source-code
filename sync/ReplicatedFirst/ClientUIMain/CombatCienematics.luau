@@ -509,12 +509,45 @@ end
 
 -- // NEW: Call this once when setting up the battle to load everything into memory
 function Maestro.Init(char, camRig, allFighters)
-	-- // NEW: Preload the UI Spritesheets
+	-- // NEW: Preload the UI Spritesheets, Skill Icons, Portraits, and UI templates
 	local assetsToLoad = {}
+	
+	-- Sprite sheets
 	for _, id in ipairs(imageIds) do
 		local tempImg = Instance.new("ImageLabel")
 		tempImg.Image = id
 		table.insert(assetsToLoad, tempImg)
+	end
+
+	-- Skill element icons
+	for _, skillData in pairs(SkillLibrary.List) do
+		local skillIcon = SkillLibrary.GetSkill(skillData.Name).Icon
+		if skillIcon and skillIcon ~= "" then
+			local tempImg = Instance.new("ImageLabel")
+			tempImg.Image = skillIcon
+			table.insert(assetsToLoad, tempImg)
+		end
+	end
+
+	-- Fighter portraits
+	for _, fighter in ipairs(allFighters) do
+		if fighter.PortraitId and fighter.PortraitId ~= "" then
+			local tempImg = Instance.new("ImageLabel")
+			tempImg.Image = fighter.PortraitId
+			table.insert(assetsToLoad, tempImg)
+		end
+	end
+
+	-- Static HealthTray assets (Heart icon)
+	local heartImg = Instance.new("ImageLabel")
+	heartImg.Image = "rbxassetid://6031094678"
+	table.insert(assetsToLoad, heartImg)
+
+	-- Preload BattleMessage static images (textbox frame etc)
+	if FightHudIndicators and FightHudIndicators.BattleMessage and FightHudIndicators.BattleMessage.Preload then
+		pcall(function()
+			FightHudIndicators.BattleMessage.Preload()
+		end)
 	end
 
 	-- This yields until the images are actually ready
@@ -635,8 +668,6 @@ function Maestro.Init(char, camRig, allFighters)
 end
 
 function Maestro.PlayEntranceAnimations(camRig, allFighters)
-	FightHudIndicators.BattleMessage.Show("BATTLE START!")
-	
 	local rigAnimator = camRig:WaitForChild("AnimationController"):WaitForChild("Animator")
 	local rigTrack = playAnim(rigAnimator, PreloadedAnims.Camera["Walk In Fight"])
 	local stopped = false
@@ -808,6 +839,12 @@ function Maestro.InitiateBattle(char, camRig, fightTable, spawnPos, LocalFighter
 	ScreenHandler.LoadOut()
 
 	coroutine.wrap(function()
+		coroutine.wrap(function()
+			task.wait(0.6) -- Wait for scrub out to finish revealing the scene
+			FightHudIndicators.HealthTray.PlayIntro()
+			FightHudIndicators.BattleMessage.Show("BATTLE START!")
+		end)()
+		
 		Maestro.PlayEntranceAnimations(camRig, allFighters)
 		-- Tutorial-fight banter (if this battle was given a StorylineConfig) plays after the walk-in
 		-- is fully done, and WaitForClear() holds the "entranceComplete" ack (and therefore the first

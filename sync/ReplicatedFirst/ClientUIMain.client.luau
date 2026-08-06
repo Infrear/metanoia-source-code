@@ -445,17 +445,6 @@ CombatReplicator.OnClientEvent:Connect(function(action, data)
 		handleRingVisuals(data.fighterData)
 		
 	elseif action == "attackUpdate" then --- THIS IS WHERE THE FIGHTER DATA IS SENT TO THE CLIENT LIKE MAYBE WHEN A FIGHTER MAKES A MOVE I WANNA DISPLAY ON THE SCREEN
-		-- HP already changed server-side (TakeImpact happens before this fires), so refresh the
-		-- health tray immediately rather than tying it to any of the windup/camera timing below --
-		-- HealthTray.Update was defined but never actually called anywhere, so the bars built at
-		-- battle start just sat frozen at their starting values all fight.
-		if data.targets then
-			for _, target in ipairs(data.targets) do
-				if target.Instance then
-					FightHudIndicators.HealthTray.Update(target.Instance, target.HP, target.MaxHP)
-				end
-			end
-		end
 
 		-- 1. Camera focuses on attacker (or general area if multiple targets)
 		-- We pass the whole target table to Maestro so it can decide how to position
@@ -484,13 +473,13 @@ CombatReplicator.OnClientEvent:Connect(function(action, data)
 		---- 2. Camera focuses on targets
 		-- If multiple targets, we focus on the first one or you could use CameraHandler.Circle(center)
 		if #data.targets == 1  then
-			CameraHandler.FocusOn(data.targets[1].Instance, 27.5)
+			CameraHandler.FocusOn(data.targets[1].Instance, 27.5, nil, nil, nil, nil, data.fighterData.Instance)
 
 		elseif skillData and skillData.CameraInfo and skillData.CameraInfo.MultiAttackCamType == "All At Once" then
 			-- For multi-target, we focus on the group or the middle-most target
-			CameraHandler.FocusOn(data.targets[math.ceil(#data.targets/2)].Instance, 35) -- later make and us e amethod for finding the instance with the middlemost position, or an avevrage of all
+			CameraHandler.FocusOn(data.targets[math.ceil(#data.targets/2)].Instance, 35, nil, nil, nil, nil, data.fighterData.Instance) -- later make and us e amethod for finding the instance with the middlemost position, or an avevrage of all
 		else
-			CameraHandler.FocusOn(data.targets[1].Instance, 27.5)
+			CameraHandler.FocusOn(data.targets[1].Instance, 27.5, nil, nil, nil, nil, data.fighterData.Instance)
 		end
 
 		task.wait((0.75 / gameSettings.CombatSettings.CombatSpeedMultiplier) / speedMult)
@@ -520,6 +509,12 @@ CombatReplicator.OnClientEvent:Connect(function(action, data)
 				}
 				GUIMaster.CreateDamagePopup(target.Instance, individualData)
 			end)()
+			
+			if target.Instance then
+				task.delay(0.15, function() -- slight delay so popup appears first
+					FightHudIndicators.HealthTray.Update(target.Instance, target.HP, target.MaxHP)
+				end)
+			end
 
 			-- Update Heart/Health bar for this specific target
 			if targetOldHealth then
