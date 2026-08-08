@@ -3,8 +3,8 @@ local DSS = game:GetService("DataStoreService")
 
 -- Playtest & Debug Settings
 local DEV_SETTINGS = {
-	DISABLE_DATA_LOADING = true,
-	DISABLE_DATA_SAVING  = true, 
+	DISABLE_DATA_LOADING = false,
+	DISABLE_DATA_SAVING  = false, 
 	DATA_VERSION_SUFFIX  = "1.69.95", 
 }
 

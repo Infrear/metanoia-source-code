@@ -776,7 +776,15 @@ function Maestro.InitiateBattle(char, camRig, fightTable, spawnPos, LocalFighter
 					LocalFightersMap[f.ID] = newInst
 					table.insert(LocalClonedFighters, newInst)
 				end
-
+				
+				local prompt = LocalFightersMap[f.ID]:FindFirstChild("HumanoidRootPart") and LocalFightersMap[f.ID].HumanoidRootPart:FindFirstChild("ProximityPrompt") or LocalFightersMap[f.ID]:FindFirstChild("ProximityPrompt")
+				if prompt then
+					if prompt.Enabled then
+						prompt:SetAttribute("WasEnabled", prompt:GetAttribute("WasEnabled") or prompt.Enabled)
+						prompt.Enabled = false
+					end
+				end
+				
 				if f.SpawnCFrame then
 					LocalFightersMap[f.ID]:PivotTo(f.SpawnCFrame)
 				end
@@ -871,6 +879,17 @@ function Maestro.SummonPersona(chara, personaName)
 		return
 	end
 
+	-- If there's already a different persona out, stash it instantly
+	local currentP = PreloadedAnims.Characters[chara].CurrentPersona
+	if currentP and currentP.Name ~= personaName and currentP.Parent == workspace.PERSONAS then
+		if not PreloadedAnims.Characters[chara].StashedPersonas then
+			PreloadedAnims.Characters[chara].StashedPersonas = {}
+		end
+		PreloadedAnims.Characters[chara].StashedPersonas[currentP.Name] = currentP
+		currentP:ScaleTo(0.01)
+		currentP:PivotTo(chara:GetPivot())
+	end
+
 	ev:Fire()
 	local interuppted = false
 	local con = ev.Event:Once(function()
@@ -909,14 +928,31 @@ function Maestro.SummonPersona(chara, personaName)
 			end
 		end
 	end
-	local spawnCFrame = chara:GetPivot() * CFrame.new(-3, 2, 2)
-	personaModel:PivotTo(spawnCFrame)
-
-	-- Measure the persona's real, full-scale size (regardless of whatever scale it happened to be at
-	-- from a previous stash) so the mesh FX can be sized to match, then keep the rig itself hidden and
-	-- tiny -- the base+crest mesh FX does the "materializing" visual instead of tweening the rig
+	local pData = require(Storage.Classes.PersonaClientSide.PersonaData)
+	local offset = CFrame.new(-3, 2, 2)
+	if pData.BasePersonas[personaName] and pData.BasePersonas[personaName].SpawnOffset then
+		offset = offset * pData.BasePersonas[personaName].SpawnOffset
+	end
+	local spawnCFrame = chara:GetPivot() * offset
+	
+	-- Measure the persona's real, full-scale size from the untouched reference model
+	local refModel = Storage.Personas:FindFirstChild(personaName)
+	local targetSize = refModel:GetExtentsSize()
+	
 	personaModel:ScaleTo(1)
-	local targetSize = personaModel:GetExtentsSize()
+	
+	-- Raycast to place it on the floor
+	local raycastParams = RaycastParams.new()
+	raycastParams.FilterDescendantsInstances = {workspace:FindFirstChild("PERSONAS"), workspace:FindFirstChild("Fighters"), chara, personaModel}
+	raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+
+	local rayResult = workspace:Raycast(spawnCFrame.Position + Vector3.new(0, 10, 0), Vector3.new(0, -30, 0), raycastParams)
+	if rayResult then
+		local bottomOffset = targetSize.Y / 2
+		spawnCFrame = CFrame.new(rayResult.Position + Vector3.new(0, bottomOffset, 0)) * spawnCFrame.Rotation
+	end
+	
+	personaModel:PivotTo(spawnCFrame)
 	personaModel:ScaleTo(0.01)
 
 	local meshFX = spawnSummonMeshFX(personaName, spawnCFrame, targetSize, false)

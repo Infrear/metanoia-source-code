@@ -1,3 +1,22 @@
+What button should a player press to initiate the swap when looking at the Tray? Should it just be t...
+left and right, as well as rb and lb for xbox, and there should be left and right floating oscilating arrows for mobile or if the player wants to click them
 
+Are you okay with the Tray just storing the index keys of the Stock array in PersonaStock.luau (e.g....
+yeah sure
+
+I will modify GlobalsServer.server.luau to pull your actual Persona from the datastore instead of th...
+Um, I actually want you to be able to run the game with mock personas, like in this case you temporarily have the angel persona and whatever personas for the tutorial run, but yeah, if there aren't mock personas passed in then you can handle it directly from the datastore
+
+A "Swap Persona" action will count as a full turn. Should swapping fail if you don't have enough SP/...
+swapping out from your tray should be a full turn yeah, and you can only do one at a time, but if you are switching between personas in the tray it is 100% free, I also wanna make a custom switch animation instead of running that big summon vfx every time, but ill implement taht later, just be ready incase
+
+The Tray size will start at 1. If you want a way to change it right now for testing (like 2 or 3), l...
+yeah, make like it check in the [AdminInfo.luau](file;file:///c%3A/Users/obfra/metanoia-source-code/sync/ReplicatedStorage/ClientStorage/Info/AdminInfo.luau)  place and if it sees me as an admin, give me 3 for testing
+
+Build a new lightweight, dynamically sized UI Frame (TrayFrame) docked in the bottom left.
+and remember that if you ever make any new script, insert the script into roblox via the mcp, and wait for it to sync over thru azul, and then edit it here, and make sure you are always in the metanoia mcp studio
+
+Handle the SwapPersona event from the server to play the Persona summoning visual effect instantly w...
+visuals should all stay being done on the client, im not sure if this is what you were referencing changing, but also things that should be verified on the server that i dont want hackable, like tray size and moves you actually have, (moves i already implemented a check), should be done on the server, so keep that in mind the security and checking [AdminInfo.luau](file;file:///c%3A/Users/obfra/metanoia-source-code/sync/ReplicatedStorage/ClientStorage/Info/AdminInfo.luau)  for admin bypasses
 
 

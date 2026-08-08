@@ -37,7 +37,7 @@ local ScreenChangeHandler = require(script:WaitForChild("ScreenChangeHandler"))
 local Maestro = require(script:WaitForChild("CombatCienematics"))
 local FightHudIndicators = require(script:WaitForChild("FightHudIndicators"))
 local slotSelect = require(script:WaitForChild("SlotSelect"))
-
+local ChoiceManager = require(script:WaitForChild("ChoiceManager"))
 local cursorImg = playerGUI:WaitForChild("Cursor"):WaitForChild("Cursor"):WaitForChild("ImageLabel")
 
 -- Local Variables
@@ -356,6 +356,13 @@ CombatReplicator.OnClientEvent:Connect(function(action, data)
 						table.insert(LocalClonedFighters, newInst)
 					end
 					
+					local prompt = LocalFightersMap[f.ID]:FindFirstChild("HumanoidRootPart") and LocalFightersMap[f.ID].HumanoidRootPart:FindFirstChild("ProximityPrompt") or LocalFightersMap[f.ID]:FindFirstChild("ProximityPrompt")
+					if prompt then
+						if prompt.Enabled then
+							prompt:SetAttribute("WasEnabled", prompt:GetAttribute("WasEnabled") or prompt.Enabled)
+							prompt.Enabled = false
+						end
+					end
 					if f.SpawnCFrame then
 						LocalFightersMap[f.ID]:PivotTo(f.SpawnCFrame)
 					end
@@ -438,6 +445,24 @@ CombatReplicator.OnClientEvent:Connect(function(action, data)
 			CombatReplicator:FireServer("batonPass", targetIdx)
 		end
 		
+	elseif action == "swapUpdate" then
+		-- free tray swap — play summon visual and refresh skills menu
+		local fighterObj = data.fighterData
+		if fighterObj and fighterObj.Instance then
+			-- CUSTOM SWITCH ANIMATION PLACEHOLDER — for now uses the summon cinematic
+			-- REPLACE THIS WITH A LIGHTER SWAP ANIM LATER
+			Maestro.SummonPersona(fighterObj.Instance, fighterObj.ActivePersona.Name)
+			
+			-- if it's our fighter, refresh skills menu with new persona's skills
+			if GUIMaster.CurrentFighterData and GUIMaster.CurrentFighterData.ID == fighterObj.ID then
+				GUIMaster.CurrentFighterData = fighterObj
+				-- refresh the skills menu if it's open
+				if GUIMaster.UIs.SkillsMenu.Open then
+					ChoiceManager.ToggleSkillMenu("Skills", fighterObj.ActivePersona.Name, fighterObj.Skills, true)
+				end
+			end
+		end
+
 	elseif action == "turnStartUpdate" then -- AND HERE KEEP THE UI STUFF
 		CameraHandler.FocusOn(data.fighterData.Instance, 12.5)
 		
@@ -459,6 +484,10 @@ CombatReplicator.OnClientEvent:Connect(function(action, data)
 		--	FightHudIndicators.AbilityAnnouncement.Show(fighterName .. " uses " .. skillDisplayName .. "!", {Duration = 2.5, ShakeIntensity = 3})
 		--end
 			
+		-- Per-move camera config (see CameraHandler MOVE CAMERA SYSTEM) -- nil for any move that
+		-- hasn't opted in, in which case every FocusOn call below stays exactly as it always was
+		local moveCameraConfig = skillData and skillData.CameraInfo and skillData.CameraInfo.MoveCamera
+
 		if data.windUp then
 			coroutine.wrap(function()
 				local isEnemy = dictfind(data.fightTable.EnemyFighters, data.fighterData.Instance)
@@ -468,11 +497,31 @@ CombatReplicator.OnClientEvent:Connect(function(action, data)
 			end)()
 
 			-- Wait for "Attack" windup
-			task.wait((((skillData.CameraInfo and skillData.CameraInfo.WindupTime) or combatSettings.WIND_UP_DELAY)/combatSettings.CombatSpeedMultiplier) / speedMult)
+			local windupDuration = (((skillData.CameraInfo and skillData.CameraInfo.WindupTime) or combatSettings.WIND_UP_DELAY)/combatSettings.CombatSpeedMultiplier) / speedMult
+
+			if moveCameraConfig and moveCameraConfig.In then
+				-- Runs alongside the windup wait below (not instead of it) so CienemateWindUp's
+				-- animation timing is completely untouched -- this only changes what the camera does
+				coroutine.wrap(function()
+					CameraHandler.RunMoveCameraPhase(moveCameraConfig.In, data.fighterData.Instance, data.targets[1] and data.targets[1].Instance, windupDuration)
+				end)()
+			end
+
+			task.wait(windupDuration)
 		end
 		---- 2. Camera focuses on targets
 		-- If multiple targets, we focus on the first one or you could use CameraHandler.Circle(center)
-		if #data.targets == 1  then
+		if moveCameraConfig and moveCameraConfig.Out then
+			-- Mirrors the same total duration the fallback FocusOn path below would've waited for,
+			-- so a move opting into MoveCamera doesn't change the overall pacing of its own attack
+			local outDuration = (0.75 / gameSettings.CombatSettings.CombatSpeedMultiplier) / speedMult
+			if skillData and skillData.CameraInfo and skillData.CameraInfo.AttackTime then
+				outDuration = math.max(outDuration, skillData.CameraInfo.AttackTime / gameSettings.CombatSettings.CombatSpeedMultiplier / speedMult)
+			end
+			coroutine.wrap(function()
+				CameraHandler.RunMoveCameraPhase(moveCameraConfig.Out, data.fighterData.Instance, data.targets[1] and data.targets[1].Instance, outDuration)
+			end)()
+		elseif #data.targets == 1  then
 			CameraHandler.FocusOn(data.targets[1].Instance, 27.5, nil, nil, nil, nil, data.fighterData.Instance)
 
 		elseif skillData and skillData.CameraInfo and skillData.CameraInfo.MultiAttackCamType == "All At Once" then
@@ -495,9 +544,9 @@ CombatReplicator.OnClientEvent:Connect(function(action, data)
 		
 		-- 3. Show Damage, Hearts, and One More for ALL targets
 		local showedOneMore = false
-		for _, target in ipairs(data.targets) do
-			local targetResult = data.results[target]
-			local targetOldHealth = data.oldHealths[target]
+		for i, target in ipairs(data.targets) do
+			local targetResult = data.results[i]
+			local targetOldHealth = data.oldHealths[i]
 
 			-- Create Damage Popup for this specific target
 			coroutine.wrap(function()
@@ -536,6 +585,7 @@ CombatReplicator.OnClientEvent:Connect(function(action, data)
 		end
 	elseif action == "yourTurn" then -- THEN HERE THE USUAL UI STUFF
 		CameraHandler.Circle()
+		GUIMaster.CanBatonPass = data.canBatonPass
 		local c1 = GUIMaster.InitializeUI(char, data.fightTable, data.fighterData)
 		if c1 then
 			local c2 = InputHandler.InitializeInput()--playerFighters[1].Instance)

@@ -25,12 +25,20 @@ function Fighter.new(model, personaData, playerOwner) -- declaration
 
 	self.Status = "Normal" -- "Normal", "Down" or "Dizzy" 
 	self.TurnActive = false
+	self.Guarding = false -- true from the moment they guard until their own next turn starts
 
 	return self
 end
 
 function Fighter:TakeImpact(damage, element) -- deals damage to the fighter
 	local affinity = self.ActivePersona.Affinities[element] or 1
+
+	-- Guarding halves whatever damage actually goes through -- applied after the affinity multiplier
+	-- so weakness hits are still worse than a guarded normal hit, just proportionally reduced same as
+	-- everything else
+	if self.Guarding then
+		damage *= 0.5
+	end
 
 	if affinity == -1 then
 		-- weakness hit logic

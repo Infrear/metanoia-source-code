@@ -379,5 +379,240 @@ function CameraManager.BattleIntroPunch()
 	settleTween.Completed:Wait()
 end
 
+-- ============================================================================================
+-- MOVE CAMERA SYSTEM
+-- ============================================================================================
+-- Highly customizable per-move camera architecture. Each move's camera config lives at
+-- skill.CameraInfo.MoveCamera = {In = {...}, Out = {...}} in SkillLibrary.
+--
+-- In / Out phases: In = wind-up/setup, Out = impact/follow-through. Each phase is independently
+-- typed as either "Procedural" (camera follows a point -- a spell particle, the target, etc) or
+-- "AnimationObject" (camera rides a physical animation played on a cloned CamRig).
+--
+-- Hybrid fallback: Out is entirely optional. Enemies sit at different spots on the battlefield,
+-- so a static rig animation rarely makes sense for the impact beat -- if Out is omitted,
+-- PlayMoveCamera automatically falls back to a procedural focus-on-target tween instead.
+--
+-- Global default: if a move has no CameraInfo.MoveCamera at all, PlayMoveCamera just calls the
+-- standard static CameraManager.FocusOn view, same as every move before this system existed --
+-- fully backwards compatible, nothing about existing moves needs to change.
+--
+-- Dummy example move (Rig-based In, Procedural Out) -- see SkillLibrary for where this would live:
+--
+--   CameraInfo = {
+--       CameraTime = 4.2,
+--       AttackTime = 2.6,
+--       MoveCamera = {
+--           In = {
+--               Type = "AnimationObject",
+--               RigName = "CamRig",                    -- looked up under Storage.Animations.Camera.Rigs
+--               AnimationId = "rbxassetid://00000000",  -- the wind-up camera move, authored relative to a caster at the origin
+--               PlaybackSpeed = 1,
+--           },
+--           Out = {
+--               Type = "Procedural",
+--               FollowPoint = "Target",     -- "Caster" / "Target" / an Instance (e.g. a spell VFX attachment) / a function
+--               Snappiness = 0.22,          -- per-frame lerp weight -- higher = snaps to the point faster
+--               Delay = 0.05,               -- seconds to wait before this phase starts moving
+--               StopAtPoint = false,        -- false = keep following for the whole phase; true = ease to the point once, then hold
+--           },
+--       },
+--   }
+--
+-- Call it from combat like: CameraManager.PlayMoveCamera(skillData.CameraInfo.MoveCamera, casterInstance, targetInstance, windupDuration, attackDuration)
+
+local moveCameraToken = nil -- bumped every PlayMoveCamera call so a stale phase's bind/wait bails cleanly instead of fighting a newer one
+
+-- Resolves a FollowPoint/LookAt reference into a world Vector3. Accepts: "Caster"/"Target"
+-- (resolved against the instances passed to PlayMoveCamera), a BasePart/Attachment/Model
+-- Instance (e.g. a moving spell particle), a plain Vector3, or a function returning any of those
+-- (for fully custom/dynamic follow points).
+local function resolveMoveCameraPoint(pointRef, casterInstance, targetInstance)
+	if typeof(pointRef) == "function" then
+		return resolveMoveCameraPoint(pointRef(), casterInstance, targetInstance)
+	elseif pointRef == "Caster" then
+		return casterInstance and casterInstance:GetPivot().Position
+	elseif pointRef == "Target" then
+		return targetInstance and targetInstance:GetPivot().Position
+	elseif typeof(pointRef) == "Vector3" then
+		return pointRef
+	elseif typeof(pointRef) == "Instance" then
+		if pointRef:IsA("Attachment") then
+			return pointRef.WorldPosition
+		elseif pointRef:IsA("BasePart") then
+			return pointRef.Position
+		elseif pointRef:IsA("Model") then
+			return pointRef:GetPivot().Position
+		end
+	end
+	return nil
+end
+
+-- Procedural phase: camera lerps toward (and optionally keeps following) a moving point.
+-- "Snappiness" is just the per-frame lerp weight -- higher snaps closer to the point each frame,
+-- lower trails behind it more loosely. StopAtPoint = true means ease to the point once and hold
+-- there instead of continuing to track it for the rest of the phase.
+local function runProceduralMovePhase(phaseConfig, casterInstance, targetInstance, duration, myToken)
+	unbindAllBinds()
+	cam.CameraType = Enum.CameraType.Scriptable
+
+	local followSpeed = phaseConfig.Snappiness or phaseConfig.FollowSpeed or 0.15
+
+	if phaseConfig.Delay and phaseConfig.Delay > 0 then
+		task.wait(phaseConfig.Delay / combatSettings.CombatSpeedMultiplier)
+	end
+	if moveCameraToken ~= myToken then return end
+
+	local startTime = os.clock()
+	local reachedStopPoint = false
+
+	RS:BindToRenderStep("MoveCameraProcedural", Enum.RenderPriority.Camera.Value, function()
+		if moveCameraToken ~= myToken then
+			RS:UnbindFromRenderStep("MoveCameraProcedural")
+			return
+		end
+
+		local elapsed = os.clock() - startTime
+		if elapsed >= (duration or 999) or (phaseConfig.StopAtPoint and reachedStopPoint) then
+			RS:UnbindFromRenderStep("MoveCameraProcedural")
+			return
+		end
+
+		local point = resolveMoveCameraPoint(phaseConfig.FollowPoint or "Target", casterInstance, targetInstance)
+		if point then
+			local lookPoint = phaseConfig.LookAt and resolveMoveCameraPoint(phaseConfig.LookAt, casterInstance, targetInstance) or point
+			local desiredPos = phaseConfig.OffsetFromPoint and (point + phaseConfig.OffsetFromPoint) or point
+			local desiredCF = CFrame.new(desiredPos, lookPoint)
+
+			cam.CFrame = cam.CFrame:Lerp(desiredCF, followSpeed)
+
+			if phaseConfig.StopAtPoint and (cam.CFrame.Position - desiredCF.Position).Magnitude < (phaseConfig.StopThreshold or 0.5) then
+				reachedStopPoint = true
+			end
+		end
+	end)
+	CameraManager.Binds["MoveCameraProcedural"] = {Service = RS}
+
+	if phaseConfig.StopAtPoint then
+		local waited = 0
+		while not reachedStopPoint and waited < (duration or 5) and moveCameraToken == myToken do
+			task.wait(0.05)
+			waited += 0.05
+		end
+	else
+		task.wait(duration or 0)
+	end
+
+	if CameraManager.Binds["MoveCameraProcedural"] then
+		RS:UnbindFromRenderStep("MoveCameraProcedural")
+		CameraManager.Binds["MoveCameraProcedural"] = nil
+	end
+end
+
+-- AnimationObject phase: since move animations are authored relative to wherever the caster
+-- happens to be standing, the CamRig gets teleported to the caster's position/orientation before
+-- the animation plays -- then it's the exact same follow mechanism as CameraManager.SetToRig.
+local function runRigMovePhase(phaseConfig, casterInstance, duration, myToken)
+	unbindAllBinds()
+
+	local rigTemplate = phaseConfig.RigTemplate or (Storage.Animations.Camera.Rigs:FindFirstChild(phaseConfig.RigName or "CamRig"))
+	if not rigTemplate then
+		warn("[CameraManager] MoveCamera AnimationObject phase: no rig template found (RigName='" .. tostring(phaseConfig.RigName) .. "')")
+		return
+	end
+
+	local rig = rigTemplate:Clone()
+	rig.Parent = workspace:FindFirstChild("SCRIPTING") or workspace
+	rig:PivotTo(casterInstance:GetPivot())
+
+	local animController = rig:FindFirstChildOfClass("AnimationController")
+	local animator = animController and animController:FindFirstChildOfClass("Animator")
+
+	if not animator or not phaseConfig.AnimationId then
+		warn("[CameraManager] MoveCamera AnimationObject phase: missing Animator on rig or no AnimationId given")
+		rig:Destroy()
+		return
+	end
+
+	local anim = Instance.new("Animation")
+	anim.AnimationId = phaseConfig.AnimationId
+
+	local track = animator:LoadAnimation(anim)
+	track.Priority = Enum.AnimationPriority.Action
+
+	CameraManager.SetToRig(rig)
+	track:Play(0, 1, phaseConfig.PlaybackSpeed or 1)
+
+	local playedDuration = duration or (track.Length / (phaseConfig.PlaybackSpeed or 1))
+	task.wait(playedDuration / combatSettings.CombatSpeedMultiplier)
+
+	if moveCameraToken == myToken and track.IsPlaying then
+		track:Stop(0.1)
+		task.wait(0.15)
+	end
+
+	rig:Destroy()
+end
+
+local function runMoveCameraPhase(phaseConfig, casterInstance, targetInstance, duration, myToken)
+	if not phaseConfig then return end
+
+	if phaseConfig.Type == "AnimationObject" then
+		runRigMovePhase(phaseConfig, casterInstance, duration, myToken)
+	elseif phaseConfig.Type == "Procedural" then
+		runProceduralMovePhase(phaseConfig, casterInstance, targetInstance, duration, myToken)
+	else
+		warn("[CameraManager] Unknown MoveCamera phase Type: " .. tostring(phaseConfig.Type))
+	end
+end
+
+-- Main entry point.
+--   moveCameraConfig: skill.CameraInfo.MoveCamera (nil is fine -- falls back to the standard
+--                     static FocusOn view, the same camera behavior every move had before this)
+--   casterInstance / targetInstance: what "Caster"/"Target" resolve to for phases that reference them
+--   inDuration / outDuration: seconds for each phase. Leave nil on an AnimationObject phase to just
+--                     let the clip's own Length (scaled by PlaybackSpeed) decide how long it runs
+function CameraManager.PlayMoveCamera(moveCameraConfig, casterInstance, targetInstance, inDuration, outDuration)
+	local myToken = {}
+	moveCameraToken = myToken
+
+	if not moveCameraConfig then
+		-- Global default: no specialized config for this move at all
+		CameraManager.FocusOn(targetInstance or casterInstance, 12.5)
+		return
+	end
+
+	if moveCameraConfig.In then
+		runMoveCameraPhase(moveCameraConfig.In, casterInstance, targetInstance, inDuration, myToken)
+	end
+	if moveCameraToken ~= myToken then return end
+
+	if moveCameraConfig.Out then
+		runMoveCameraPhase(moveCameraConfig.Out, casterInstance, targetInstance, outDuration, myToken)
+	else
+		-- Hybrid fallback -- see header comment
+		CameraManager.FocusOn(targetInstance or casterInstance, 10, nil, nil, "Base Zoom")
+		if outDuration and moveCameraToken == myToken then
+			task.wait(outDuration / combatSettings.CombatSpeedMultiplier)
+		end
+	end
+end
+
+-- Exposes a single phase (In or Out) on its own, for combat code that already has its own
+-- windup/attack timing (like attackUpdate) and wants to slot just one phase into a specific
+-- window instead of running the bundled In-then-Out sequence via PlayMoveCamera. This blocks for
+-- `duration` just like the phase runners do internally -- callers should coroutine.wrap this if
+-- they don't want it to hold up their own timeline.
+function CameraManager.RunMoveCameraPhase(phaseConfig, casterInstance, targetInstance, duration)
+	local myToken = {}
+	moveCameraToken = myToken
+	runMoveCameraPhase(phaseConfig, casterInstance, targetInstance, duration, myToken)
+end
+
+-- Lets combat code bail a move's camera sequence early (e.g. the target died mid-animation)
+-- without waiting out the rest of a phase's duration
+function CameraManager.CancelMoveCamera()
+	moveCameraToken = nil
+end
 
 return CameraManager

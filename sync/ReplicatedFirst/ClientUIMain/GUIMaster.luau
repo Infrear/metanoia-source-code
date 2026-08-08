@@ -22,6 +22,16 @@ local combatSettings = gameSettings.CombatSettings
 local GUIMaster = {}
 local PlayerGui = game.Players.LocalPlayer:WaitForChild("PlayerGui")
 local currentHighlight = nil
+local CombatReplicator = Storage.Events.Remotes.ReplicateCombat
+
+local function dictfind(tab, instKey)
+	for i, v in ipairs(tab) do
+		if v.Instance == instKey then
+			return i
+		end
+	end
+	return nil
+end
 
 -- Constants
 local ADD_TIME = {
@@ -286,8 +296,173 @@ function GUIMaster.ToggleMenu(ui, force, ...) -- Handles UI visibility with styl
 			ui.Object.Enabled = target
 		end
 	end
+	
+	-- auto-show/hide tray when skills menu toggles
+	if ui == GUIMaster.UIs.SkillsMenu then
+		if target and GUIMaster.CurrentFighterData then
+			GUIMaster.ShowPersonaTray(true)
+		else
+			GUIMaster.ShowPersonaTray(false)
+		end
+	end
 	-- PLAN: IMPLEMENT TILTED ANIMATIONS USING TWEENSERVICE
 	-- implemented :)
+end
+
+-- ========================
+-- persona tray ui system
+-- ========================
+local trayFrame = nil
+local trayArrowLeft = nil
+local trayArrowRight = nil
+
+GUIMaster.ActiveTrayIndex = 1
+
+local function buildTrayFrame()
+	if trayFrame then return end
+	
+	trayFrame = Instance.new("Frame")
+	trayFrame.Name = "PersonaTray"
+	trayFrame.AnchorPoint = Vector2.new(0, 1)
+	trayFrame.Position = UDim2.new(0.015, 0, 0.96, 0)
+	trayFrame.Size = UDim2.new(0, 200, 0, 55)
+	trayFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
+	trayFrame.BackgroundTransparency = 0.3
+	trayFrame.BorderSizePixel = 0
+	trayFrame.Visible = false
+	trayFrame.Parent = PlayerGui:WaitForChild("SkillsMenu")
+	
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 8)
+	corner.Parent = trayFrame
+	
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Color3.fromRGB(180, 40, 40)
+	stroke.Thickness = 1.5
+	stroke.Transparency = 0.4
+	stroke.Parent = trayFrame
+	
+	-- left arrow
+	trayArrowLeft = Instance.new("TextButton")
+	trayArrowLeft.Name = "ArrowLeft"
+	trayArrowLeft.Size = UDim2.new(0, 22, 1, 0)
+	trayArrowLeft.Position = UDim2.new(0, 0, 0, 0)
+	trayArrowLeft.BackgroundTransparency = 1
+	trayArrowLeft.Text = "◀"
+	trayArrowLeft.TextColor3 = Color3.fromRGB(220, 220, 220)
+	trayArrowLeft.TextSize = 16
+	trayArrowLeft.Font = Enum.Font.GothamBold
+	trayArrowLeft.Parent = trayFrame
+	trayArrowLeft.MouseButton1Click:Connect(function()
+		GUIMaster.CyclePersonaTray("left")
+	end)
+	
+	-- right arrow
+	trayArrowRight = Instance.new("TextButton")
+	trayArrowRight.Name = "ArrowRight"
+	trayArrowRight.Size = UDim2.new(0, 22, 1, 0)
+	trayArrowRight.Position = UDim2.new(1, -22, 0, 0)
+	trayArrowRight.BackgroundTransparency = 1
+	trayArrowRight.Text = "▶"
+	trayArrowRight.TextColor3 = Color3.fromRGB(220, 220, 220)
+	trayArrowRight.TextSize = 16
+	trayArrowRight.Font = Enum.Font.GothamBold
+	trayArrowRight.Parent = trayFrame
+	trayArrowRight.MouseButton1Click:Connect(function()
+		GUIMaster.CyclePersonaTray("right")
+	end)
+end
+
+local function refreshTrayIcons()
+	if not trayFrame then return end
+	-- clear old icons
+	for _, child in ipairs(trayFrame:GetChildren()) do
+		if child:IsA("Frame") then child:Destroy() end
+	end
+	
+	local fighterData = GUIMaster.CurrentFighterData
+	if not fighterData or not fighterData.StoredPersonas then return end
+	
+	local personas = fighterData.StoredPersonas
+	local count = #personas
+	if count == 0 then return end
+	
+	-- figure out which tray slot is active
+	for i, p in ipairs(personas) do
+		if p.Name == fighterData.ActivePersona.Name then
+			GUIMaster.ActiveTrayIndex = i
+			break
+		end
+	end
+	
+	-- resize tray frame to fit
+	local iconSize = 40
+	local padding = 6
+	local arrowWidth = 22
+	local totalWidth = (arrowWidth * 2) + (count * iconSize) + ((count - 1) * padding) + 12
+	trayFrame.Size = UDim2.new(0, totalWidth, 0, iconSize + 14)
+	
+	-- create icon frames
+	for i, persona in ipairs(personas) do
+		local iconFrame = Instance.new("Frame")
+		iconFrame.Name = "PersonaIcon_" .. i
+		iconFrame.Size = UDim2.new(0, iconSize, 0, iconSize)
+		iconFrame.Position = UDim2.new(0, arrowWidth + 6 + (i - 1) * (iconSize + padding), 0.5, 0)
+		iconFrame.AnchorPoint = Vector2.new(0, 0.5)
+		iconFrame.BorderSizePixel = 0
+		iconFrame.Parent = trayFrame
+		
+		local iconCorner = Instance.new("UICorner")
+		iconCorner.CornerRadius = UDim.new(0, 6)
+		iconCorner.Parent = iconFrame
+		
+		if i == GUIMaster.ActiveTrayIndex then
+			iconFrame.BackgroundColor3 = Color3.fromRGB(180, 35, 35)
+			local activeStroke = Instance.new("UIStroke")
+			activeStroke.Color = Color3.fromRGB(255, 255, 255)
+			activeStroke.Thickness = 2
+			activeStroke.Parent = iconFrame
+		else
+			iconFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+		end
+		
+		local label = Instance.new("TextLabel")
+		label.Size = UDim2.new(1, 0, 1, 0)
+		label.BackgroundTransparency = 1
+		label.Text = string.sub(persona.Name, 1, 5)
+		label.TextColor3 = Color3.new(1, 1, 1)
+		label.TextScaled = true
+		label.Font = Enum.Font.GothamBold
+		label.Parent = iconFrame
+	end
+end
+
+function GUIMaster.ShowPersonaTray(show)
+	buildTrayFrame()
+	if show then
+		refreshTrayIcons()
+	end
+	trayFrame.Visible = show
+end
+
+function GUIMaster.CyclePersonaTray(dir)
+	local fighterData = GUIMaster.CurrentFighterData
+	if not fighterData or not fighterData.StoredPersonas or #fighterData.StoredPersonas <= 1 then return end
+	
+	local count = #fighterData.StoredPersonas
+	if dir == "left" then
+		GUIMaster.ActiveTrayIndex = GUIMaster.ActiveTrayIndex - 1
+		if GUIMaster.ActiveTrayIndex < 1 then GUIMaster.ActiveTrayIndex = count end
+	else
+		GUIMaster.ActiveTrayIndex = GUIMaster.ActiveTrayIndex + 1
+		if GUIMaster.ActiveTrayIndex > count then GUIMaster.ActiveTrayIndex = 1 end
+	end
+	
+	-- fire to server — server validates and broadcasts swapUpdate back to all clients
+	CombatReplicator:FireServer("SwapPersona", tostring(GUIMaster.ActiveTrayIndex))
+	
+	-- optimistic local highlight update
+	refreshTrayIcons()
 end
 
 function GUIMaster.ChangeSelection(dir) -- Moves target from left to right
@@ -462,22 +637,109 @@ function GUIMaster.CreateDamagePopup(targetInstance, info)
 	end
 end
 
+local TS = game:GetService("TweenService")
+local oneMoreSetupDone = false
+local burst, speedLines, numberFrame, moreFrame, burstFinal, numberFinal, letterFrames, oneMoreScreenGui
+local spinConn
+
 function GUIMaster.ShowOneMore()
-	--local splash = PlayerGui.BattleUI:FindFirstChild("OneMoreSplash")
-	--if not splash then return end -- Ensure you have this in your UI
+	if not oneMoreSetupDone then
+		oneMoreScreenGui = game.Players.LocalPlayer.PlayerGui:FindFirstChild("OneMoreGui")
+		if not oneMoreScreenGui then return end
+		
+		local holder = oneMoreScreenGui:WaitForChild("Holder")
+		burst = holder.Burst
+		speedLines = holder.SpeedLines
+		numberFrame = holder.NumberFrame
+		moreFrame = holder.MoreFrame
+		
+		local function captureFinalPose(inst)
+			return {Size = inst.Size, Position = inst.Position, Rotation = inst.Rotation}
+		end
+		burstFinal = captureFinalPose(burst)
+		numberFinal = captureFinalPose(numberFrame)
+		
+		letterFrames = {}
+		for _, child in ipairs(moreFrame:GetChildren()) do
+			if child:IsA("Frame") then
+				table.insert(letterFrames, {frame = child, final = captureFinalPose(child)})
+			end
+		end
+		table.sort(letterFrames, function(a, b) return a.frame.Name < b.frame.Name end)
+		oneMoreSetupDone = true
+	end
 
-	--splash.Visible = true
-	--splash.GroupTransparency = 1
-	--splash.Position = UDim2.new(0.6, 0, 0.5, 0) -- Slide in from right
+	if not oneMoreScreenGui then return end
 
-	--TS:Create(splash, TweenInfo.new(0.4, Enum.EasingStyle.Back), {
-	--	GroupTransparency = 0,
-	--	Position = UDim2.new(0.5, 0, 0.5, 0)
-	--}):Play()
+	local function setHidden()
+		burst.BackgroundTransparency = 1
+		burst.Size = UDim2.new(burstFinal.Size.X.Scale * 0.3, 0, burstFinal.Size.Y.Scale * 0.3, 0)
+		speedLines.Rotation = 0
+		numberFrame.Size = UDim2.new(0, 0, 0, 0)
+		for _, data in ipairs(letterFrames) do
+			data.frame.Size = UDim2.new(0, 0, 0, 0)
+		end
+	end
 
-	--task.delay(1.5, function()
-	--	TS:Create(splash, TweenInfo.new(0.3), {GroupTransparency = 1}):Play()
-	--end)
+	local function tweenGroupTransparency(inst, transparency, info)
+		for _, desc in ipairs(inst:GetDescendants()) do
+			if desc:IsA("TextLabel") then
+				TS:Create(desc, info, {TextTransparency = transparency}):Play()
+			elseif desc:IsA("UIStroke") then
+				TS:Create(desc, info, {Transparency = transparency}):Play()
+			elseif desc:IsA("Frame") and desc.BackgroundTransparency < 1 then
+				TS:Create(desc, info, {BackgroundTransparency = transparency}):Play()
+			end
+		end
+	end
+
+	setHidden()
+	oneMoreScreenGui.Enabled = true
+
+	TS:Create(burst, TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+		Size = burstFinal.Size,
+		BackgroundTransparency = 0.15,
+	}):Play()
+
+	if spinConn then spinConn:Disconnect() end
+	spinConn = game:GetService("RunService").Heartbeat:Connect(function(dt)
+		speedLines.Rotation += dt * 260
+	end)
+
+	task.delay(0.05, function()
+		TS:Create(numberFrame, TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+			Size = numberFinal.Size,
+		}):Play()
+	end)
+
+	for i, data in ipairs(letterFrames) do
+		task.delay(0.12 + (i - 1) * 0.06, function()
+			TS:Create(data.frame, TweenInfo.new(0.2, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+				Size = data.final.Size,
+			}):Play()
+		end)
+	end
+
+	task.delay(1.1, function()
+		local fadeInfo = TweenInfo.new(0.3, Enum.EasingStyle.Sine, Enum.EasingDirection.In)
+		TS:Create(burst, fadeInfo, {BackgroundTransparency = 1}):Play()
+		tweenGroupTransparency(numberFrame, 1, fadeInfo)
+		tweenGroupTransparency(moreFrame, 1, fadeInfo)
+
+		task.delay(0.35, function()
+			if spinConn then spinConn:Disconnect() end
+			oneMoreScreenGui.Enabled = false
+			setHidden()
+			for _, desc in ipairs(numberFrame:GetDescendants()) do
+				if desc:IsA("TextLabel") then desc.TextTransparency = 0
+				elseif desc:IsA("UIStroke") then desc.Transparency = 0 end
+			end
+			for _, desc in ipairs(moreFrame:GetDescendants()) do
+				if desc:IsA("TextLabel") then desc.TextTransparency = 0
+				elseif desc:IsA("UIStroke") then desc.Transparency = 0 end
+			end
+		end)
+	end)
 end
 
 function GUIMaster.CloseAllBattleUIs()
@@ -519,6 +781,83 @@ function GUIMaster.CloseAllBattleUIs()
 		end
 	end
 	personaChar = nil
+end
+
+-- Called from ClientUIMain when the server prompts a baton pass ("1 MORE") after a weakness hit /
+-- critical. Shows the OneMoreGui popup, lets the player cycle through eligible party members using
+-- the same Target-indicator system skill-targeting already uses (so it feels consistent), and either
+-- fires "batonPass" with a chosen target index, or lets it time out -- the server already defaults
+-- back to the attacker if it doesn't hear back in time.
+function GUIMaster.PromptBatonPass(fightTable)
+
+	-- Eligible pass-targets: your own party, excluding yourself and anyone already knocked out
+	local eligible = {}
+	for _, fighterData in ipairs(fightTable.PlayerFighters or {}) do
+		local isSelf = GUIMaster.CurrentFighterData and fighterData.Instance == GUIMaster.CurrentFighterData.Instance
+		local isDown = fighterData.HP and fighterData.HP <= 0
+		if not isSelf and not isDown then
+			table.insert(eligible, fighterData)
+		end
+	end
+
+	if #eligible == 0 then
+		return -- nobody to pass to -- server will default back to the attacker after its own timeout
+	end
+
+	local index = 1
+	local function showSelection()
+		local sel = eligible[index]
+		GUIMaster.MoveTarget({sel.Instance})
+		GUIMaster.FocusCamOnTarget(sel.Instance, nil, true)
+		GUIMaster.MoveHeart(sel)
+	end
+	showSelection()
+
+	local confirmed = false
+	local chosenIndex = nil
+
+	local conn
+	conn = UIS.InputBegan:Connect(function(input, processed)
+		if processed then return end
+		if input.KeyCode == Enum.KeyCode.A or input.KeyCode == Enum.KeyCode.Left then
+			index -= 1
+			if index < 1 then index = #eligible end
+			showSelection()
+		elseif input.KeyCode == Enum.KeyCode.D or input.KeyCode == Enum.KeyCode.Right then
+			index += 1
+			if index > #eligible then index = 1 end
+			showSelection()
+		elseif input.KeyCode == Enum.KeyCode.Return or input.KeyCode == Enum.KeyCode.ButtonA then
+			chosenIndex = index
+			confirmed = true
+		elseif input.KeyCode == Enum.KeyCode.Backspace or input.KeyCode == Enum.KeyCode.ButtonB then
+			confirmed = true -- decline -- chosenIndex stays nil, falls through to the timeout default
+		end
+	end)
+
+	local waited = 0
+	while not confirmed do
+		task.wait(0.05)
+	end
+	conn:Disconnect()
+
+	-- Close out the indicator(s) the same way ChoiceManager does after a normal target confirm
+	local multi = (#GUIMaster.UIs.Target.Indicators > 1) or nil
+	for _, indicator in ipairs(GUIMaster.UIs.Target.Indicators) do
+		GUIMaster.ToggleTargets(indicator, false, multi)
+	end
+	GUIMaster.UIs.Target.Indicators = {}
+	GUIMaster.UIs.Target.Open = false
+
+	if chosenIndex then
+		local chosenFighter = eligible[chosenIndex]
+		local realIndex = dictfind(fightTable.AllFighters, chosenFighter.Instance)
+		if realIndex then
+			CombatReplicator:FireServer("batonPass", nil, {realIndex})
+			return true
+		end
+	end
+	return false
 end
 
 return GUIMaster

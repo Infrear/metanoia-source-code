@@ -28,13 +28,27 @@ local function startBridgeCombat(plr)
 	local Fighter = require(SS.Storage.Classes.CombatSystem.Fighter)
 	local PersonaData = require(Storage.Classes.PersonaClientSide.PersonaData)
 	
-	-- prepare player fighter
-	local plrPersona = PersonaData.new("Angel")
-	local plrFighter = Fighter.new(plr.Character, {ActivePersona = plrPersona}, plr)
+	-- prepare player fighter — use datastore tray when available, mock data otherwise
+	local plrPersona = PersonaData.new("Angel") -- tutorial default
+	local storedPersonas = {plrPersona}
+	
+	if odm.PlayerData[plr] and odm.PlayerData[plr].Data and odm.PlayerData[plr].Data.PersonaStock then
+		local pStock = odm.PlayerData[plr].Data.PersonaStock
+		local active = pStock:GetActivePersona()
+		if active then
+			plrPersona = active
+		end
+		local trayP = pStock:GetTrayPersonas()
+		if trayP and #trayP > 0 then
+			storedPersonas = trayP
+		end
+	end
+	
+	local plrFighter = Fighter.new(plr.Character, {ActivePersona = plrPersona, StoredPersonas = storedPersonas}, plr)
 	
 	-- prepare timmy fighter (Server passes string, Client renders)
 	local timmyPersona = PersonaData.new("Balloon")
-	local timmyFighter = Fighter.new("Timmy", {ActivePersona = timmyPersona}, nil) 
+	local timmyFighter = Fighter.new("Timmy", {ActivePersona = timmyPersona, StoredPersonas = {timmyPersona}}, nil) 
 	timmyFighter.IsNPC = true 
 	
 	-- prepare golem fighters

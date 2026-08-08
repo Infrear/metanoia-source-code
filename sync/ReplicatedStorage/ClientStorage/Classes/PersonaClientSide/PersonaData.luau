@@ -41,6 +41,7 @@ PersonaData.BasePersonas = {
 		}
 	},
 	["Golem"] = {
+		SpawnOffset = CFrame.new(-5, 0, 10),
 		Stats = { ST = 8, MA = 2, EN = 9, AG = 2, LU = 4 },
 		KnownSkills = { "Rock Smash", "Alien Laser" },
 		Affinities = {

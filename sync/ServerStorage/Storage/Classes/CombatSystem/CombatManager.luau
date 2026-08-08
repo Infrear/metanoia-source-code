@@ -201,8 +201,8 @@ function CombatManager.ExecuteSkill(attacker, targets, skillName, fightTable) --
 			result = target:TakeImpact(baseDamage, skill.Element)
 		end
 		
-		results[target] = result
-		oldHealths[oldHealth] = oldHealth
+		results[i] = result
+		oldHealths[i] = oldHealth
 
 		-- CombatStoryline "GolemEnraged" beat -- fires once per battle (not once per golem) the
 		-- first time any Golem crosses half HP, so multiple golems enraging doesn't spam the line
@@ -216,10 +216,10 @@ function CombatManager.ExecuteSkill(attacker, targets, skillName, fightTable) --
 		if result == "WEAK" then CRITCOUNTER += 1 end
 		
 		local kShot = target.HP <= 0
-		kShots[target] = kShot
+		kShots[i] = kShot
 		
 		if camType == "Individual" then
-			replicateAction(fightTable, attacker, {target}, skillName, baseDamage, {target = result}, {target = oldHealth}, {target = kShot}, "Skill", windUp)
+			replicateAction(fightTable, attacker, {target}, skillName, baseDamage, {result}, {oldHealth}, {kShot}, "Skill", windUp)
 			if kShot then
 				task.wait(((SkillLibrary.List[skillName].CameraInfo and SkillLibrary.List[skillName].CameraInfo.KillShotTime) or combatSettings.KILLSHOT_DELAY/combatSettings.CombatSpeedMultiplier) / fightTable.SpeedMultiplier)
 			end
@@ -251,35 +251,6 @@ function CombatManager.ExecuteSkill(attacker, targets, skillName, fightTable) --
 	
 	if CRITCOUNTER >= 1 then
 		print("CRITICAL HIT! ONE MORE!")
-		if attacker.PlayerOwner then
-			CombatReplicator:FireClient(attacker.PlayerOwner, "promptBatonPass", {fightTable = fightTable})
-			local con, recieved = nil, false
-			con = CombatReplicator.OnServerEvent:Connect(function(plr, action, targetFighterIndex)
-				if plr == attacker.PlayerOwner and action == "batonPass" then
-					recieved = { targetIndex = targetFighterIndex }
-					if con then con:Disconnect() end
-				end
-			end)
-			
-			local timer = 0
-			local limit = #fightTable.PlayersInvolved > 1 and combatSettings.PlayerActionTimeLimit or 9999
-			while not recieved and timer < limit do
-				timer += task.wait(0.5)
-				if not attacker.PlayerOwner then break end
-			end
-			
-			if recieved and recieved.targetIndex then
-				local targetFighter = fightTable.AllFighters[recieved.targetIndex]
-				if targetFighter then
-					targetFighter.BatonBoost = true -- Stat boost flag for next hit
-					fightTable.BonusTurnFighter = targetFighter
-					CombatManager.NextTurn(fightTable)
-					return
-				end
-			end
-		end
-		
-		-- Default to self if no baton pass target selected or AI
 		fightTable.BonusTurnFighter = attacker
 		CombatManager.NextTurn(fightTable)
 	else
@@ -349,7 +320,7 @@ function CombatManager.InitializeBattle(splitParticipants, centerCFrame, storyli
 				end
 			local root = char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart
 			if root then
-				--root.Anchored = true
+				root.Anchored = true
 			end
 		end
 
@@ -405,6 +376,8 @@ end
 function CombatManager.NextTurn(fightTable) -- handle logic for current turn
 	--task.wait(0.5) -- idk if i need this
 	local currentStriker = fightTable.BonusTurnFighter or fightTable.AllFighters[CurrentTurnIndex]
+	-- Guard protection lasts until the guarding fighter's own next turn -- this is that moment
+	currentStriker.Guarding = false
 	
 	for i, plrTab in ipairs(fightTable.PlayersInvolved) do
 		if not currentStriker.PlayerOwner or plrTab.PlayerObject ~= currentStriker.PlayerOwner then
@@ -416,15 +389,49 @@ function CombatManager.NextTurn(fightTable) -- handle logic for current turn
 	
 	if fightTable.BonusTurnFighter and not fightTable.BonusTurnFighter.PlayerOwner then
 		print("BATON PASS TRIGGERED TO NPC! Thinking...")
-		task.wait(1.5) -- "Think" for a second before attacking
+		--task.wait(0.15) -- "Think" for a second before attacking
 	end
 	
 	if currentStriker.PlayerOwner then
-		CombatReplicator:FireClient(currentStriker.PlayerOwner, "yourTurn", {fightTable = fightTable, fighterData = currentStriker})
+		local isBonus = fightTable.BonusTurnFighter == currentStriker
+		CombatReplicator:FireClient(currentStriker.PlayerOwner, "yourTurn", {fightTable = fightTable, fighterData = currentStriker, canBatonPass = isBonus})
 		print("WAITING FOR ACTION FROM: " .. currentStriker.PlayerOwner.Name)
 		local con, recieved = nil, false
 		con = CombatReplicator.OnServerEvent:Connect(function(plr, action, skill, targetIndices, speed)
 			if plr == currentStriker.PlayerOwner then
+				-- free swap within tray — doesn't consume the turn
+				if action == "SwapPersona" then
+					local trayIdx = tonumber(skill)
+					if trayIdx and currentStriker.StoredPersonas and currentStriker.StoredPersonas[trayIdx] then
+						local newPersona = currentStriker.StoredPersonas[trayIdx]
+						-- don't swap if already active
+						if newPersona.Name == currentStriker.ActivePersona.Name then return end
+						
+						currentStriker.ActivePersona = newPersona
+						currentStriker.Skills = newPersona.KnownSkills or {}
+						-- recalc hp/sp caps based on new persona stats
+						currentStriker.MaxHP = newPersona.Stats.EN * 20
+						currentStriker.MaxSP = newPersona.Stats.MA * 10
+						-- clamp current values to new caps
+						currentStriker.HP = math.min(currentStriker.HP, currentStriker.MaxHP)
+						currentStriker.SP = math.min(currentStriker.SP, currentStriker.MaxSP)
+						
+						-- broadcast swap to all clients
+						for _, plrTab in ipairs(fightTable.PlayersInvolved) do
+							CombatReplicator:FireClient(plrTab.PlayerObject, "swapUpdate", {
+								fighterData = currentStriker,
+								trayIndex = trayIdx,
+							})
+						end
+					else
+						-- invalid tray index — could be exploiter, just ignore
+						if not table.find(adminInfo.Admins, plr.Name) then
+							warn(plr.Name .. " tried to swap to invalid tray index: " .. tostring(trayIdx))
+						end
+					end
+					return -- don't close the connection, player still needs to pick an action
+				end
+				
 				recieved = {
 					Action = action,
 					Skill = skill,
@@ -452,6 +459,38 @@ function CombatManager.NextTurn(fightTable) -- handle logic for current turn
 				fightTable.SpeedMultiplier = clampedSpeed
 			end
 
+			if recieved.Action == "Guard" then
+				-- Guarding isn't a skill -- no windup, no targets, just flag it and pass the turn.
+				-- The flag gets cleared automatically up top the next time this fighter's turn comes
+				-- around, and Fighter:TakeImpact halves damage while it's set.
+				currentStriker.Guarding = true
+				for _, plrTab in ipairs(fightTable.PlayersInvolved) do
+					CombatReplicator:FireClient(plrTab.PlayerObject, "guardUpdate", {
+						fighterData = currentStriker,
+					})
+				end
+				CurrentTurnIndex = (CurrentTurnIndex % #fightTable.AllFighters) + 1
+				fightTable.BonusTurnFighter = nil
+				CombatManager.NextTurn(fightTable)
+				return
+			end
+			
+			if recieved.Action == "batonPass" then
+				local targetFighter = nil
+				if recieved.TargetIndices and recieved.TargetIndices[1] then
+					targetFighter = fightTable.AllFighters[recieved.TargetIndices[1]]
+				end
+				
+				if targetFighter then
+					targetFighter.BatonBoost = true -- Stat boost flag for next hit
+					fightTable.BonusTurnFighter = targetFighter
+					CombatManager.NextTurn(fightTable)
+					return
+				else
+					warn("Invalid Baton Pass target index!")
+				end
+			end
+
 			-- 2. Convert indices back to Fighter Objects
 			local targetObjects = {}
 			if recieved.TargetIndices then
@@ -474,7 +513,7 @@ function CombatManager.NextTurn(fightTable) -- handle logic for current turn
 	else
 		-- do ai stuff
 		print("AI'S TURN: " .. (currentStriker.ModelName or "NPC"))
-		task.wait((combatSettings.AI_THINK_TIME/combatSettings.CombatSpeedMultiplier) / fightTable.SpeedMultiplier) -- simulate thinking
+		--task.wait((combatSettings.AI_THINK_TIME/combatSettings.CombatSpeedMultiplier) / fightTable.SpeedMultiplier) -- simulate thinking
 		local decision = SimpleAI.GetDecision(currentStriker, fightTable)
 
 		print("AI DECIDED: " .. decision.Skill .. " ON TARGET " .. decision.TargetIndices[1])

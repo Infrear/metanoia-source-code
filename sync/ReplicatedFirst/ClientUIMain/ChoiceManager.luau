@@ -64,7 +64,14 @@ function ChoiceManager.ToggleSkillMenu(category, personaName, skills, force, sel
 	if category == "Skills" then
 		-- Load from SkillLibrary
 		-- Use the Red/Blue/Green UI styles
-		if (not GUIMaster.UIs.SkillsMenu.Open) and (force ~= false) then
+		local shouldOpen = false
+		if force ~= nil then
+			shouldOpen = force
+		else
+			shouldOpen = not GUIMaster.UIs.SkillsMenu.Open
+		end
+
+		if shouldOpen then
 			ChoiceManager.CurrentAction = "Skills"
 			local holder = GUIMaster.UIs.SkillsMenu.Object.Holder
 			local skillFrame = holder.Overlay.SkillsFrame
@@ -115,26 +122,31 @@ function ChoiceManager.ToggleSkillMenu(category, personaName, skills, force, sel
 				local frame = skillFrame:FindFirstChild("SkillFrame" .. i)
 				if frame then
 					local data = SkillLibrary.GetSkill(skillName)
-					frame.Visible = true
-					frame.Overtext.Text = data.Name
-					frame.SPFrame.Overnumber.Text = data.Cost
-					frame.SPFrame.Overtype.Text = data.CostType
-					frame.SPFrame.Overnumber.TextXAlignment = Enum.TextXAlignment.Right
+					if data then
+						frame.Visible = true
+						frame.Overtext.Text = data.Name
+						frame.SPFrame.Overnumber.Text = data.Cost
+						frame.SPFrame.Overtype.Text = data.CostType
+						frame.SPFrame.Overnumber.TextXAlignment = Enum.TextXAlignment.Right
 
-					if data.CostType == "HP" then
-						frame.SPFrame.Overtype.TextXAlignment = Enum.TextXAlignment.Center
-						frame.SPFrame.Overnumber:SetAttribute("TargetColor", Color3.fromRGB(8, 255, 164))
-						frame.SPFrame.Overtype:SetAttribute("TargetColor", Color3.fromRGB(0, 0, 0))
-						frame.SPFrame.Slider:SetAttribute("TargetColor", Color3.fromRGB(8, 255, 164))
-						frame.SPFrame.Slider:SetAttribute("InUse", true)
+						if data.CostType == "HP" then
+							frame.SPFrame.Overtype.TextXAlignment = Enum.TextXAlignment.Center
+							frame.SPFrame.Overnumber:SetAttribute("TargetColor", Color3.fromRGB(8, 255, 164))
+							frame.SPFrame.Overtype:SetAttribute("TargetColor", Color3.fromRGB(0, 0, 0))
+							frame.SPFrame.Slider:SetAttribute("TargetColor", Color3.fromRGB(8, 255, 164))
+							frame.SPFrame.Slider:SetAttribute("InUse", true)
+						else
+							frame.SPFrame.Slider:SetAttribute("InUse", false)
+							frame.SPFrame.Overtype.TextXAlignment = Enum.TextXAlignment.Left
+							frame.SPFrame.Overnumber:SetAttribute("TargetColor", Color3.new(1, 1, 1))
+							frame.SPFrame.Overtype:SetAttribute("TargetColor", Color3.new(1, 1, 1))
+						end
+						frame.IconFrame.Img.Image = data.Icon
+						-- PLAN: UPDATE UI GRADIENTS BASED ON ELEMENT TYPE
 					else
-						frame.SPFrame.Slider:SetAttribute("InUse", false)
-						frame.SPFrame.Overtype.TextXAlignment = Enum.TextXAlignment.Left
-						frame.SPFrame.Overnumber:SetAttribute("TargetColor", Color3.new(1, 1, 1))
-						frame.SPFrame.Overtype:SetAttribute("TargetColor", Color3.new(1, 1, 1))
+						warn("Skill '" .. tostring(skillName) .. "' not found in SkillLibrary! Hiding frame.")
+						frame.Visible = false
 					end
-					frame.IconFrame.Img.Image = data.Icon
-					-- PLAN: UPDATE UI GRADIENTS BASED ON ELEMENT TYPE
 				end
 			end
 

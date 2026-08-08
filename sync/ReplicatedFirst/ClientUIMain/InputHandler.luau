@@ -82,7 +82,7 @@ function InputHandler.HandleActionInput(input) -- Detects keypresses for the Rin
 				end)()
 			else
 				--coroutine.wrap(function()
-					Maestro.SummonPersona(char, "Angel")
+				Maestro.SummonPersona(char, GUIMaster.CurrentFighterData.ActivePersona.Name)
 				--end)()
 				ChoiceManager.ToggleSkillMenu("Skills", GUIMaster.CurrentFighterData.ActivePersona.Name, GUIMaster.CurrentFighterData.Skills)
 				CameraHandler.FocusOn(GUIMaster.CurrentFighterData.Instance, nil, CameraHandler.OffsetPresets.SkillMenu, CFrame.new(0, -1.5 * (ChoiceManager.CurrentSkillFrame - 1), 0))
@@ -92,14 +92,38 @@ function InputHandler.HandleActionInput(input) -- Detects keypresses for the Rin
 		if GUIMaster.UIs.SkillsMenu.Open then
 			ChoiceManager.ChangeSelection((input.KeyCode == Enum.KeyCode.Up or input.KeyCode == Enum.KeyCode.DPadUp) and "up" or "down")
 		end	
-	elseif input.KeyCode == Enum.KeyCode.Left or input.KeyCode == Enum.KeyCode.DPadLeft or input.KeyCode == Enum.KeyCode.Right or input.KeyCode == Enum.KeyCode.DPadRight then
-		if GUIMaster.UIs.Target.Open then
-			GUIMaster.ChangeSelection((input.KeyCode == Enum.KeyCode.Left or input.KeyCode == Enum.KeyCode.DPadLeft) and "left" or "right", ChoiceManager.CurrentSkillFrame)
+	elseif input.KeyCode == Enum.KeyCode.Left or input.KeyCode == Enum.KeyCode.DPadLeft or input.KeyCode == Enum.KeyCode.Right or input.KeyCode == Enum.KeyCode.DPadRight or input.KeyCode == Enum.KeyCode.ButtonL1 or input.KeyCode == Enum.KeyCode.ButtonR1 then
+		local isLeft = (input.KeyCode == Enum.KeyCode.Left or input.KeyCode == Enum.KeyCode.DPadLeft or input.KeyCode == Enum.KeyCode.ButtonL1)
+		local isBumper = (input.KeyCode == Enum.KeyCode.ButtonL1 or input.KeyCode == Enum.KeyCode.ButtonR1)
+		
+		if GUIMaster.UIs.Target.Open and not isBumper then
+			-- arrow keys cycle target selection
+			GUIMaster.ChangeSelection(isLeft and "left" or "right", ChoiceManager.CurrentSkillFrame)
+		elseif GUIMaster.UIs.SkillsMenu.Open then
+			-- cycle persona tray (arrows + bumpers both work here)
+			GUIMaster.CyclePersonaTray(isLeft and "left" or "right")
 		end	
-	elseif input.KeyCode == Enum.KeyCode.Return then
+	elseif input.KeyCode == Enum.KeyCode.Return or input.KeyCode == Enum.KeyCode.ButtonA then
 		if GUIMaster.UIs.SkillsMenu.Open or GUIMaster.UIs.Target.Open then
 			GUIMaster.Animations.UpdateTri("MouseClick", true)
 			ChoiceManager.ConfirmSelection()
+		end
+	elseif input.KeyCode == Enum.KeyCode.X or input.KeyCode == Enum.KeyCode.ButtonX then
+		if not GUIMaster.UIs.Target.Open then
+			coroutine.wrap(function()
+				ChoiceManager.ToggleSkillMenu(ChoiceManager.CurrentAction, nil, nil, false)
+				GUIMaster.Animations.CleanUpTri()
+				GUIMaster.ToggleMenu(GUIMaster.UIs.LeftMainBattleUI, false)
+				GUIMaster.ToggleMenu(GUIMaster.UIs.RightMainBattleUI, false)
+				
+				local success = GUIMaster.PromptBatonPass(GUIMaster.CurrentFightTab)
+				
+				if not success then
+					ChoiceManager.ToggleSkillMenu("Skills", nil, nil, true)
+					GUIMaster.ToggleMenu(GUIMaster.UIs.LeftMainBattleUI, true)
+					GUIMaster.ToggleMenu(GUIMaster.UIs.RightMainBattleUI, true)
+				end
+			end)()
 		end
 	elseif input.KeyCode == Enum.KeyCode.Backspace or input.KeyCode == Enum.KeyCode.ButtonB then -- "Back" button When player hits Backspace / Cancels
 		if GUIMaster.UIs.Target.Open then

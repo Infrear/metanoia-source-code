@@ -131,8 +131,11 @@ local BASE_CONFIDANTS = {
 
 local BASE_PERSONA_STOCK = {
 	ActiveIndex = 1,
+	TraySize = 1,
+	Tray = {1, 2}, -- For testing, we are pre-filling 2 slots
 	Stock = {
-		[1] = {Name = "Angel", Level = 1, Exp = 0, Skills = {"Eiha", "Cleave"}, Stats = {ST=5, MA=5, EN=5, AG=5, LU=5}}
+		[1] = {Name = "Angel", Level = 1, Exp = 0, Skills = {"Light Strike", "Spirit Heal"}, Stats = {ST=5, MA=5, EN=5, AG=5, LU=5}},
+		[2] = {Name = "Golem", Level = 1, Exp = 0, Skills = {"Rock Smash"}, Stats = {ST=8, MA=2, EN=9, AG=2, LU=4}}
 	}
 }
 
