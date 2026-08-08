@@ -7,7 +7,7 @@
 
 	Usage:
 		BattleMessage.Show("Nice! The enemy's down!", "rbxassetid://12345", 2.5)
-		BattleMessage.Show("Golem used Rock Smash!") -- charImage/duration are optional
+		BattleMessage.Show("Golem used Ground Smash!") -- charImage/duration are optional
 
 	Calling Show() again while one is already up cancels the old one cleanly (no leftover tweens).
 ]]

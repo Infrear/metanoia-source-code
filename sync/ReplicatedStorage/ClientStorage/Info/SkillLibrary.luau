@@ -28,9 +28,19 @@ local ElementIcons = {
 }
 
 SkillLibrary.PreloadedVFXFunctions = {}
-for i, v in pairs(Moves:GetChildren()) do
-	SkillLibrary.PreloadedVFXFunctions[v.Name] = require(v)
+local function preloadFunction(v)
+	if typeof(v) == 'Instance' then 
+		if v:IsA("ModuleScript") then
+			SkillLibrary.PreloadedVFXFunctions[v.Name] = require(v)
+		elseif v:IsA("Folder") then
+			for i, v in pairs(v:GetChildren()) do
+				preloadFunction(v)
+			end
+		end
+	end
 end
+
+preloadFunction(Moves)
 
 -- Skill Dictionary
 SkillLibrary.List = {
@@ -43,7 +53,7 @@ SkillLibrary.List = {
 		Cost = 4,
 		Power = 1.2,
 		Description = "Deals light Flame damage to 1 foe.",
-		VFXMod = SkillLibrary.PreloadedVFXFunctions.Lightning,
+		VFXMod = SkillLibrary.PreloadedVFXFunctions.LavaBomb,
 		CameraInfo = {
 			CameraTime = 3.85,
 			AttackTime = 2.5,
@@ -86,7 +96,7 @@ SkillLibrary.List = {
 		Cost = 7,
 		Power = 1.5,
 		Description = "Light Physical damage to one foe.",
-		VFXMod = SkillLibrary.PreloadedVFXFunctions.Lightning,
+		VFXMod = SkillLibrary.PreloadedVFXFunctions.WarriorMultiSlash,
 		CameraInfo = {
 			CameraTime = 3.85,
 			AttackTime = 2.5,
@@ -115,10 +125,26 @@ SkillLibrary.List = {
 		TargetAmt = 1,
 		CostType = "SP",
 		Cost = 5,
+		Power = 5,
+		Description = "Light Light damage to one foes.",
+		VFXMod = SkillLibrary.PreloadedVFXFunctions.WarriorMultiSlash,
+		CameraInfo = { CameraTime = 2.5, AttackTime = 2 }
+	},
+	["Seventh Heaven"] = {
+		Name = "Seventh Heaven",
+		Element = PersonaData.Elements.LIGHT,
+		TargetType = "Enemies",
+		TargetAmt = "All",
+		CostType = "SP",
+		Cost = 5,
 		Power = 1.3,
-		Description = "Light Light damage to one foe.",
-		VFXMod = SkillLibrary.PreloadedVFXFunctions.Lightning,
-		CameraInfo = { CameraTime = 3.85, AttackTime = 2.5 }
+		Description = "Light Light damage to all foes.",
+		VFXMod = SkillLibrary.PreloadedVFXFunctions.SeventhHeaven,
+		CameraInfo = { 
+			CameraTime = 5, 
+			AttackTime = 4,
+			MultiAttackCamType = "All At Once"
+		}
 	},
 	["Spirit Heal"] = {
 		Name = "Spirit Heal",
@@ -129,8 +155,8 @@ SkillLibrary.List = {
 		Cost = 6,
 		Power = 1.0,
 		Description = "Heals an ally.",
-		VFXMod = SkillLibrary.PreloadedVFXFunctions.Lightning,
-		CameraInfo = { CameraTime = 3.85, AttackTime = 2.5 }
+		VFXMod = SkillLibrary.PreloadedVFXFunctions.LeafVortex,
+		CameraInfo = { CameraTime = 1.8, AttackTime = 1 }
 	},
 	["Flora Breeze"] = {
 		Name = "Flora Breeze",
@@ -141,20 +167,24 @@ SkillLibrary.List = {
 		Cost = 4,
 		Power = 1.2,
 		Description = "Light Flora damage to one foe.",
-		VFXMod = SkillLibrary.PreloadedVFXFunctions.Lightning,
-		CameraInfo = { CameraTime = 3.85, AttackTime = 2.5 }
+		VFXMod = SkillLibrary.PreloadedVFXFunctions.LeafVortex,
+		CameraInfo = { CameraTime = 1.8, AttackTime = 1 }
 	},
-	["Rock Smash"] = {
-		Name = "Rock Smash",
+	["Ground Smash"] = {
+		Name = "Ground Smash",
 		Element = PersonaData.Elements.EARTH,
 		TargetType = "Enemies",
-		TargetAmt = 1,
+		TargetAmt = "All",
 		CostType = "HP",
 		Cost = 8,
-		Power = 1.6,
+		Power = 10,
 		Description = "Heavy Earth damage to one foe.",
-		VFXMod = SkillLibrary.PreloadedVFXFunctions.Lightning,
-		CameraInfo = { CameraTime = 3.85, AttackTime = 2.5 }
+		VFXMod = SkillLibrary.PreloadedVFXFunctions.GroundImpact,
+		CameraInfo = {
+			CameraTime = 3.85,
+			AttackTime = 2.5,
+			MultiAttackCamType = "All At Once", -- "All At Once" or "Individual"
+		}
 	},
 	["Alien Laser"] = {
 		Name = "Alien Laser",
@@ -165,8 +195,21 @@ SkillLibrary.List = {
 		Cost = 5,
 		Power = 1.4,
 		Description = "Alien damage to one foe.",
-		VFXMod = SkillLibrary.PreloadedVFXFunctions.Lightning,
+		VFXMod = SkillLibrary.PreloadedVFXFunctions.AlienLazer,
 		CameraInfo = { CameraTime = 3.85, AttackTime = 2.5 }
+	},
+	["Rock Hurl"] = {
+		Name = "Rock Hurl",
+		Element = PersonaData.Elements.EARTH,
+		TargetType = "Enemies",
+		TargetAmt = 1,
+		CostType = "SP",
+		Cost = 5,
+		Power = 10,
+		Description = "Alien damage to one foe.",
+		VFXMod = SkillLibrary.PreloadedVFXFunctions.StoneHurl,
+		VFXParams = {"CasterCFrame", "TargetModel"},
+		CameraInfo = { CameraTime = 1.5, AttackTime = 1 }
 	}
 }
 

@@ -25,7 +25,7 @@ local cacheFolder = workspace:FindFirstChild("PARTICLES")
 local cache = ObjectCache.new(defaultTemplate, 100, cacheFolder)
 
 -- configurable raycast filter (workspace.Map for production, Terrain for osp4)
-local filterInstances = workspace:FindFirstChild("Map") and {workspace.Map} or {workspace.Terrain}
+local filterInstances = {workspace.RESOURCES.GROUND, workspace.Terrain, workspace.RESOURCES.dreamworld.floatables.platforms.clouds}
 
 -- Swap out the raycast filter targets at runtime.
 -- instances - array of BasePart/Model to include in the raycast
@@ -40,10 +40,10 @@ function RockModule.SetRockTemplate(template, cacheSize)
 	cache = ObjectCache.new(template, cacheSize or 100, cacheFolder)
 end
 
-function RockModule.Punch(origin:Vector3, direction:Vector3, raycastDirection:Vector3, angle:number, lines:number, distance:number, startsize:number, endsize:number, numrocks:number, lifetime:number, startdist:number, popuptime:number, retracttime:number)
+function RockModule.Punch(origin:Vector3, direction:Vector3, raycastDirection:Vector3, angle:number, lines:number, distance:number, startsize:number, endsize:number, numrocks:number, lifetime:number, startdist:number, popuptime:number, retracttime:number, forceFilterInstances:{Instances}, blacklist:boolean)
 	local rayparams = RaycastParams.new()
-	rayparams.FilterType = Enum.RaycastFilterType.Include
-	rayparams.FilterDescendantsInstances = filterInstances
+	rayparams.FilterType = blacklist and Enum.RaycastFilterType.Exclude or Enum.RaycastFilterType.Include
+	rayparams.FilterDescendantsInstances = forceFilterInstances or filterInstances
 	
 	local result = workspace:Raycast(origin, raycastDirection, rayparams)
 	

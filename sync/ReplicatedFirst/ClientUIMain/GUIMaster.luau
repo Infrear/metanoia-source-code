@@ -700,6 +700,8 @@ function GUIMaster.ShowOneMore()
 		Size = burstFinal.Size,
 		BackgroundTransparency = 0.15,
 	}):Play()
+	
+	CameraHandler.Shake(0.3, 0.4)
 
 	if spinConn then spinConn:Disconnect() end
 	spinConn = game:GetService("RunService").Heartbeat:Connect(function(dt)
@@ -805,6 +807,7 @@ function GUIMaster.PromptBatonPass(fightTable)
 	end
 
 	local index = 1
+	GUIMaster.IsPromptingBatonPass = true
 	local function showSelection()
 		local sel = eligible[index]
 		GUIMaster.MoveTarget({sel.Instance})
@@ -840,6 +843,7 @@ function GUIMaster.PromptBatonPass(fightTable)
 		task.wait(0.05)
 	end
 	conn:Disconnect()
+	GUIMaster.IsPromptingBatonPass = false
 
 	-- Close out the indicator(s) the same way ChoiceManager does after a normal target confirm
 	local multi = (#GUIMaster.UIs.Target.Indicators > 1) or nil
@@ -858,6 +862,72 @@ function GUIMaster.PromptBatonPass(fightTable)
 		end
 	end
 	return false
+end
+
+function GUIMaster.PulseMainOption(optionName)
+	local optionUI = nil
+	if GUIMaster.UIs.RightMainBattleUI.Object then
+		local holder = GUIMaster.UIs.RightMainBattleUI.Object:FindFirstChild("Holder")
+		if holder then optionUI = holder:FindFirstChild(optionName) end
+	end
+	if not optionUI and GUIMaster.UIs.LeftMainBattleUI.Object then
+		local holder = GUIMaster.UIs.LeftMainBattleUI.Object:FindFirstChild("Holder")
+		if holder then optionUI = holder:FindFirstChild(optionName) end
+	end
+	
+	if optionUI then
+		local originalSize = optionUI.Size
+		local isText = optionUI:IsA("TextLabel") or optionUI:IsA("TextButton")
+		local originalColor = isText and optionUI.TextColor3 or (optionUI:IsA("ImageLabel") and optionUI.ImageColor3 or nil)
+		local origBgColor = optionUI.Overlay.Chatbar2.ImageColor3
+		local origBgTrans = optionUI.Overlay.Chatbar2.ImageTransparency
+		
+		local propsOut = {
+			Size = UDim2.fromScale(originalSize.X.Scale * 1.4, originalSize.Y.Scale * 1.1),
+		}
+		local ovOut = {
+			BackgroundColor3 = Color3.new(1, 1, 1),
+			BackgroundTransparency = 0,
+		}
+		local imgOut = {
+			ImageColor3 = Color3.new(1, 1, 1),
+			ImageTransparency = 0,
+		}
+		
+		local propsIn = {
+			Size = originalSize,
+		}
+		local ovIn = {
+			BackgroundColor3 = origBgColor,
+			BackgroundTransparency = origBgTrans,
+		}
+		local imgIn = {
+			ImageColor3 = origBgColor,
+			BackgroundTransparency = origBgTrans,
+		}
+		
+		if originalColor then
+			if isText then
+				propsOut.TextColor3 = Color3.new(1, 1, 1)
+				propsIn.TextColor3 = originalColor
+			else
+				propsOut.ImageColor3 = Color3.new(1, 1, 1)
+				propsIn.ImageColor3 = originalColor
+			end
+		end
+		
+		TS:Create(optionUI, TweenInfo.new(0.06, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), propsOut):Play()
+		TS:Create(optionUI.Overlay, TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), ovOut):Play()
+		TS:Create(optionUI.Overlay.Chatbar2, TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), imgOut):Play()
+		
+		task.delay(0.06, function()
+			if optionUI and optionUI.Parent then
+				TS:Create(optionUI, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.In), propsIn):Play()
+				TS:Create(optionUI.Overlay, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.In), ovIn):Play()
+				TS:Create(optionUI.Overlay.Chatbar2, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.In), imgIn):Play()
+			end
+		end)
+	end
 end
 
 return GUIMaster

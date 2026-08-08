@@ -24,7 +24,7 @@ PersonaData.Elements = {
 PersonaData.BasePersonas = {
 	["Angel"] = {
 		Stats = { ST = 4, MA = 6, EN = 4, AG = 6, LU = 5 },
-		KnownSkills = { "Light Strike", "Spirit Heal" }, -- placeholder skills
+		KnownSkills = { "Light Strike", "Spirit Heal", "Seventh Heaven"}, -- placeholder skills
 		Affinities = {
 			[PersonaData.Elements.LIGHT] = 2,
 			[PersonaData.Elements.SPIRIT] = 2,
@@ -43,7 +43,7 @@ PersonaData.BasePersonas = {
 	["Golem"] = {
 		SpawnOffset = CFrame.new(-5, 0, 10),
 		Stats = { ST = 8, MA = 2, EN = 9, AG = 2, LU = 4 },
-		KnownSkills = { "Rock Smash", "Alien Laser" },
+		KnownSkills = { "Ground Smash", "Alien Laser" },
 		Affinities = {
 			[PersonaData.Elements.EARTH] = 2,
 			[PersonaData.Elements.ALIEN] = 1,

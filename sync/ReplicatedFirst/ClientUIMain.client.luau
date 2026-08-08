@@ -281,6 +281,7 @@ end
 
 local LocalFightersMap = {}
 local LocalClonedFighters = {}
+local ActiveGuardShields = {} -- [fighterInstance] = the persistent Shield-01 VFX instance while they're guarding
 
 local ActiveRing = nil
 local SpinConnection = nil
@@ -412,6 +413,29 @@ CombatReplicator.OnClientEvent:Connect(function(action, data)
 		
 		Maestro.InitiateBattle(char, camRig, data.fightTable, char:GetPivot(), LocalFightersMap, LocalClonedFighters)
 		
+	elseif action == "guardUpdate" then
+		-- Persistent Shield-01 effect while guarding -- tracked per-fighter so it can be cleanly
+		-- removed later (either faded out normally when their guard ends, or destroyed abruptly and
+		-- replaced with the break burst if a hit shatters it -- see attackUpdate/turnStartUpdate below)
+		if data.fighterData and data.fighterData.Instance then
+			local existingShield = ActiveGuardShields[data.fighterData.Instance]
+			if existingShield then
+				existingShield:Destroy()
+				ActiveGuardShields[data.fighterData.Instance] = nil
+			end
+
+			local guardVFXFolder = Storage.Effects.Combat:FindFirstChild("GuardVFX")
+			local defaultFn = guardVFXFolder and guardVFXFolder:FindFirstChild("Default")
+			if defaultFn then
+				local vfxOk, shieldInstance = pcall(require(defaultFn), data.fighterData.Instance)
+				if vfxOk and shieldInstance then
+					ActiveGuardShields[data.fighterData.Instance] = shieldInstance
+				elseif not vfxOk then
+					warn("[ClientUIMain] guard VFX error: " .. tostring(shieldInstance))
+				end
+			end
+		end
+
 	elseif action == "endBattle" then
 		for _, inst in ipairs(LocalClonedFighters) do
 			if inst then inst:Destroy() end
@@ -468,6 +492,25 @@ CombatReplicator.OnClientEvent:Connect(function(action, data)
 		
 		-- Ring Visuals
 		handleRingVisuals(data.fighterData)
+
+		-- If this fighter had an active guard shield and their Guarding flag is now false (server
+		-- clears it right as their own turn starts), their guard ended normally -- fade/remove the
+		-- shield. A BROKEN guard (from a hit) is handled separately in attackUpdate and won't still
+		-- be tracked here by the time this fires.
+		if data.fighterData and data.fighterData.Instance then
+			local shield = ActiveGuardShields[data.fighterData.Instance]
+			if shield and not data.fighterData.Guarding then
+				local TS_ = game:GetService("TweenService")
+				for _, desc in ipairs(shield:GetDescendants()) do
+					if desc:IsA("ParticleEmitter") then desc.Enabled = false end
+				end
+				TS_:Create(shield, TweenInfo.new(0.4, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {Transparency = 1}):Play()
+				task.delay(0.5, function()
+					if shield then shield:Destroy() end
+				end)
+				ActiveGuardShields[data.fighterData.Instance] = nil
+			end
+		end
 		
 	elseif action == "attackUpdate" then --- THIS IS WHERE THE FIGHTER DATA IS SENT TO THE CLIENT LIKE MAYBE WHEN A FIGHTER MAKES A MOVE I WANNA DISPLAY ON THE SCREEN
 
@@ -574,8 +617,34 @@ CombatReplicator.OnClientEvent:Connect(function(action, data)
 				)
 			end
 
-			-- Check if any hit was a weakness to trigger the "One More" UI
-			if targetResult == "WEAK" and not showedOneMore then
+			-- Guard block/break VFX
+			if (targetResult == "BLOCKED" or targetResult == "GUARD_BREAK") and target.Instance then
+				local guardVFXFolder = Storage.Effects.Combat:FindFirstChild("GuardVFX")
+				if targetResult == "BLOCKED" then
+					local blockFn = guardVFXFolder and guardVFXFolder:FindFirstChild("BlockHit")
+					if blockFn then
+						local vfxOk, vfxErr = pcall(require(blockFn), target.Instance)
+						if not vfxOk then warn("[ClientUIMain] block VFX error: " .. tostring(vfxErr)) end
+					end
+				elseif targetResult == "GUARD_BREAK" then
+					-- Guard broke -- kill the persistent shield immediately (no fade, it just shattered)
+					-- and play the break burst in its place
+					local shield = ActiveGuardShields[target.Instance]
+					if shield then
+						shield:Destroy()
+						ActiveGuardShields[target.Instance] = nil
+					end
+					local breakFn = guardVFXFolder and guardVFXFolder:FindFirstChild("ShieldBreak")
+					if breakFn then
+						local vfxOk, vfxErr = pcall(require(breakFn), target.Instance)
+						if not vfxOk then warn("[ClientUIMain] shield break VFX error: " .. tostring(vfxErr)) end
+					end
+				end
+			end
+
+			-- Check if any hit was a weakness (or broke a guard, which server-side also grants the
+			-- bonus turn for -- see CombatManager's CRITCOUNTER check) to trigger the "One More" UI
+			if (targetResult == "WEAK" or targetResult == "GUARD_BREAK") and not showedOneMore then
 				showedOneMore = true
 				coroutine.wrap(function()
 					task.wait((0.5 / gameSettings.CombatSettings.CombatSpeedMultiplier) / speedMult)

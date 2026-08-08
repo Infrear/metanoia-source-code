@@ -213,7 +213,9 @@ function CombatManager.ExecuteSkill(attacker, targets, skillName, fightTable) --
 			end
 		end
 		
-		if result == "WEAK" then CRITCOUNTER += 1 end
+		-- GUARD_BREAK is still a weakness hit underneath (guard broke because of it) -- it should
+		-- still earn the "1 More" bonus same as an unguarded weakness hit would
+		if result == "WEAK" or result == "GUARD_BREAK" then CRITCOUNTER += 1 end
 		
 		local kShot = target.HP <= 0
 		kShots[i] = kShot

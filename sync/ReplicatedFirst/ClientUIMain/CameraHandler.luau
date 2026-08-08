@@ -19,6 +19,8 @@ local combatSettings = gameSettings.CombatSettings
 
 local CameraManager = {}
 
+local CAM_DEBUG_ENABLED = false
+
 -- Global Variables
 CameraManager.CurrentMode = "None" -- "Idle", "Focus", "Cutscene"
 CameraManager.OrbitAngle = 0
@@ -53,6 +55,11 @@ CameraManager.OffsetPresets = {
 }
 
 CameraManager.BASE_TIS = {
+	["Fast Zoom"] = TweenInfo.new(
+		0.25/gameSettings.CombatSettings.CombatSpeedMultiplier, 
+		Enum.EasingStyle.Quint,
+		Enum.EasingDirection.Out
+	),
 	["Base Zoom"] = TweenInfo.new(
 		0.8/gameSettings.CombatSettings.CombatSpeedMultiplier, 
 		Enum.EasingStyle.Quint
@@ -229,18 +236,20 @@ function CameraManager.Initialize(participants, manualCenter)
 	end
 	
 	-- DEBUG CENTER MARKER
-	local existingMarker = workspace:FindFirstChild("DebugCenterMarker")
-	if existingMarker then existingMarker:Destroy() end
-	local marker = Instance.new("Part")
-	marker.Name = "DebugCenterMarker"
-	marker.Shape = Enum.PartType.Cylinder
-	marker.Size = Vector3.new(0.5, 4, 4)
-	marker.Color = Color3.new(1, 0, 0)
-	marker.Material = Enum.Material.Neon
-	marker.Anchored = true
-	marker.CanCollide = false
-	marker.CFrame = CFrame.new(CameraManager.CenterPoint) * CFrame.Angles(0, 0, math.rad(90))
-	marker.Parent = workspace
+	if CAM_DEBUG_ENABLED then
+		local existingMarker = workspace:FindFirstChild("DebugCenterMarker")
+		if existingMarker then existingMarker:Destroy() end
+		local marker = Instance.new("Part")
+		marker.Name = "DebugCenterMarker"
+		marker.Shape = Enum.PartType.Cylinder
+		marker.Size = Vector3.new(0.5, 4, 4)
+		marker.Color = Color3.new(1, 0, 0)
+		marker.Material = Enum.Material.Neon
+		marker.Anchored = true
+		marker.CanCollide = false
+		marker.CFrame = CFrame.new(CameraManager.CenterPoint) * CFrame.Angles(0, 0, math.rad(90))
+		marker.Parent = workspace
+	end
 	
 	--CameraManager.Circle()
 end
@@ -613,6 +622,28 @@ end
 -- without waiting out the rest of a phase's duration
 function CameraManager.CancelMoveCamera()
 	moveCameraToken = nil
+end
+
+function CameraManager.Shake(duration, intensity)
+	local shakeEnd = tick() + duration
+	
+	pcall(function() RS:UnbindFromRenderStep("CameraShake") end)
+	
+	RS:BindToRenderStep("CameraShake", Enum.RenderPriority.Camera.Value + 2, function()
+		if tick() > shakeEnd then
+			RS:UnbindFromRenderStep("CameraShake")
+			return
+		end
+		
+		local factor = (shakeEnd - tick()) / duration
+		local currentIntensity = intensity * factor
+		
+		local x = (math.random() - 0.5) * 2 * currentIntensity
+		local y = (math.random() - 0.5) * 2 * currentIntensity
+		local z = (math.random() - 0.5) * 2 * currentIntensity
+		
+		cam.CFrame = cam.CFrame * CFrame.new(x, y, z)
+	end)
 end
 
 return CameraManager

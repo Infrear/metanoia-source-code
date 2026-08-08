@@ -62,13 +62,22 @@ end
 function InputHandler.HandleActionInput(input) -- Detects keypresses for the Ring
 	if input.KeyCode == Enum.KeyCode.E then -- Item
 		if not GUIMaster.UIs.Target.Open then
-			print("Opening Items...")
+			GUIMaster.PulseMainOption("Item")
+			task.wait(0.12)
 			ChoiceManager.ToggleSkillMenu("Items", GUIMaster.CurrentFighterData.ActivePersona.Name, {"Apple", "Berry", "Position"}) -- for later implementation
 		end
 	elseif input.KeyCode == Enum.KeyCode.F then -- Guard
-			if GUIMaster.UIs.LeftMainBattleUI.Open then
-				WaitForInput:FireServer("Guard")
-			end
+		if GUIMaster.UIs.LeftMainBattleUI.Open then
+			coroutine.wrap(function()
+				GUIMaster.PulseMainOption("Guard")
+				task.wait(0.12)
+				GUIMaster.ToggleMenu(GUIMaster.UIs.LeftMainBattleUI, false)
+				GUIMaster.ToggleMenu(GUIMaster.UIs.RightMainBattleUI, false)
+				CameraHandler.FocusOn(GUIMaster.CurrentFighterData.Instance, 6, nil, nil, "Fast Zoom")
+				task.wait(0.25)
+				WaitForInput:Fire("Guard")
+			end)()
+		end
 	elseif input.KeyCode == Enum.KeyCode.P then -- Persona/Skills
 		if not GUIMaster.UIs.Target.Open and GUIMaster.CurrentFighterData and GUIMaster.CurrentFighterData.Skills then
 			if GUIMaster.UIs.SkillsMenu.Open then
@@ -81,9 +90,9 @@ function InputHandler.HandleActionInput(input) -- Detects keypresses for the Rin
 					GUIMaster.Animations.CleanUpTri()
 				end)()
 			else
-				--coroutine.wrap(function()
+				GUIMaster.PulseMainOption("Persona")
+				task.wait(0.12)
 				Maestro.SummonPersona(char, GUIMaster.CurrentFighterData.ActivePersona.Name)
-				--end)()
 				ChoiceManager.ToggleSkillMenu("Skills", GUIMaster.CurrentFighterData.ActivePersona.Name, GUIMaster.CurrentFighterData.Skills)
 				CameraHandler.FocusOn(GUIMaster.CurrentFighterData.Instance, nil, CameraHandler.OffsetPresets.SkillMenu, CFrame.new(0, -1.5 * (ChoiceManager.CurrentSkillFrame - 1), 0))
 			end
@@ -96,7 +105,7 @@ function InputHandler.HandleActionInput(input) -- Detects keypresses for the Rin
 		local isLeft = (input.KeyCode == Enum.KeyCode.Left or input.KeyCode == Enum.KeyCode.DPadLeft or input.KeyCode == Enum.KeyCode.ButtonL1)
 		local isBumper = (input.KeyCode == Enum.KeyCode.ButtonL1 or input.KeyCode == Enum.KeyCode.ButtonR1)
 		
-		if GUIMaster.UIs.Target.Open and not isBumper then
+		if GUIMaster.UIs.Target.Open and not isBumper and not GUIMaster.IsPromptingBatonPass then
 			-- arrow keys cycle target selection
 			GUIMaster.ChangeSelection(isLeft and "left" or "right", ChoiceManager.CurrentSkillFrame)
 		elseif GUIMaster.UIs.SkillsMenu.Open then
@@ -109,8 +118,10 @@ function InputHandler.HandleActionInput(input) -- Detects keypresses for the Rin
 			ChoiceManager.ConfirmSelection()
 		end
 	elseif input.KeyCode == Enum.KeyCode.X or input.KeyCode == Enum.KeyCode.ButtonX then
-		if not GUIMaster.UIs.Target.Open then
+		if not GUIMaster.UIs.Target.Open and not GUIMaster.UIs.SkillsMenu.Open then
 			coroutine.wrap(function()
+				GUIMaster.PulseMainOption("Baton Pass")
+				task.wait(0.12)
 				ChoiceManager.ToggleSkillMenu(ChoiceManager.CurrentAction, nil, nil, false)
 				GUIMaster.Animations.CleanUpTri()
 				GUIMaster.ToggleMenu(GUIMaster.UIs.LeftMainBattleUI, false)
@@ -119,7 +130,6 @@ function InputHandler.HandleActionInput(input) -- Detects keypresses for the Rin
 				local success = GUIMaster.PromptBatonPass(GUIMaster.CurrentFightTab)
 				
 				if not success then
-					ChoiceManager.ToggleSkillMenu("Skills", nil, nil, true)
 					GUIMaster.ToggleMenu(GUIMaster.UIs.LeftMainBattleUI, true)
 					GUIMaster.ToggleMenu(GUIMaster.UIs.RightMainBattleUI, true)
 				end
@@ -133,7 +143,7 @@ function InputHandler.HandleActionInput(input) -- Detects keypresses for the Rin
 				GUIMaster.ToggleTargets(v, false, m)
 			end
 			GUIMaster.ToggleMenu(GUIMaster.UIs.Heart, false)
-			ChoiceManager.ToggleSkillMenu(ChoiceManager.CurrentAction, GUIMaster.CurrentFighterData.ActivePersona.Name, {"Zio", "Agi", "Garu", "Cleave"}, true) -- re-open menu
+			ChoiceManager.ToggleSkillMenu(ChoiceManager.CurrentAction, GUIMaster.CurrentFighterData.ActivePersona.Name, GUIMaster.CurrentFighterData.Skills, true) -- re-open menu
 			CameraHandler.FocusOn(GUIMaster.CurrentFighterData.Instance, nil, CameraHandler.OffsetPresets.SkillMenu, CFrame.new(0, -1.5 * (ChoiceManager.CurrentSkillFrame - 1), 0))
 		elseif GUIMaster.UIs.SkillsMenu.Open then
 			-- Back out of Skills to Main Ring

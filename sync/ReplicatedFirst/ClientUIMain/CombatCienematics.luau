@@ -875,7 +875,24 @@ function Maestro.SummonPersona(chara, personaName)
 	-- there's nothing to animate, just make sure it's still near the character in case they moved,
 	-- and skip the shrink/regrow + summon animation replay entirely.
 	if PreloadedAnims.Characters[chara].CurrentPersona and PreloadedAnims.Characters[chara].CurrentPersona.Name == personaName and PreloadedAnims.Characters[chara].CurrentPersona.Parent == workspace.PERSONAS then
-		PreloadedAnims.Characters[chara].CurrentPersona:PivotTo(chara:GetPivot() * CFrame.new(-3, 2, 2))
+		local pData = require(Storage.Classes.PersonaClientSide.PersonaData)
+		local offset = CFrame.new(-3, 2, 2)
+		if pData.BasePersonas[personaName] and pData.BasePersonas[personaName].SpawnOffset then
+			offset = offset * pData.BasePersonas[personaName].SpawnOffset
+		end
+		local spawnCFrame = chara:GetPivot() * offset
+		
+		local targetSize = PreloadedAnims.Characters[chara].CurrentPersona:GetExtentsSize()
+		local raycastParams = RaycastParams.new()
+		raycastParams.FilterDescendantsInstances = {workspace:FindFirstChild("PERSONAS"), workspace:FindFirstChild("Fighters"), chara, PreloadedAnims.Characters[chara].CurrentPersona}
+		raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+
+		local rayResult = workspace:Raycast(spawnCFrame.Position + Vector3.new(0, 10, 0), Vector3.new(0, -30, 0), raycastParams)
+		if rayResult then
+			spawnCFrame = CFrame.new(rayResult.Position + Vector3.new(0, targetSize.Y / 2, 0)) * spawnCFrame.Rotation
+		end
+		
+		PreloadedAnims.Characters[chara].CurrentPersona:PivotTo(spawnCFrame)
 		return
 	end
 
@@ -1213,9 +1230,16 @@ end
 function Maestro.CienemateMove(char, atktype, skillName, fighterData, targets)
 	if atktype == "Skill" then
 		for i, target in pairs(targets) do
-			if SkillLibrary.List[skillName].VFXMod then
+			local skillInfo = SkillLibrary.List[skillName]
+			if skillInfo and skillInfo.VFXMod then
 				coroutine.wrap(function()
-					SkillLibrary.List[skillName].VFXMod(target.Instance:GetPivot())
+					local attackParams = {
+						TargetCFrame = target.Instance:GetPivot(),
+						TargetModel = target.Instance,
+						CasterCFrame = fighterData.Instance:GetPivot(),
+						CasterModel = fighterData.Instance
+					}
+					skillInfo.VFXMod(attackParams)
 				end)()
 			end
 		end

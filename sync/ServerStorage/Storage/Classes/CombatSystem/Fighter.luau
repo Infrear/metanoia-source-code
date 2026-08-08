@@ -32,19 +32,26 @@ end
 
 function Fighter:TakeImpact(damage, element) -- deals damage to the fighter
 	local affinity = self.ActivePersona.Affinities[element] or 1
+	local wasGuarding = self.Guarding
+	local guardBroke = false
 
-	-- Guarding halves whatever damage actually goes through -- applied after the affinity multiplier
-	-- so weakness hits are still worse than a guarded normal hit, just proportionally reduced same as
-	-- everything else
-	if self.Guarding then
+	if wasGuarding then
+		-- A weakness hit, or anything hefty enough (>=30% of max HP before the guard reduction),
+		-- breaks the guard outright: it still gets the halved damage this one time, but Guarding ends
+		-- immediately instead of lasting the rest of the enemy phase, and the client shows the shield
+		-- actually shattering (Shield-Break-01) instead of just absorbing the hit (Generic-Block-Hit).
+		guardBroke = (affinity == -1) or (damage >= self.MaxHP * 0.3)
 		damage *= 0.5
+		if guardBroke then
+			self.Guarding = false
+		end
 	end
 
 	if affinity == -1 then
 		-- weakness hit logic
 		self.HP -= (damage * 1.5)
 		self.Status = "Down"
-		return "WEAK" 
+		return wasGuarding and "GUARD_BREAK" or "WEAK"
 	elseif affinity == 0 then
 		return "NULL"
 		-- Add logic for Resist, Drain, Repel here
@@ -53,6 +60,9 @@ function Fighter:TakeImpact(damage, element) -- deals damage to the fighter
 		self.HP -= damage
 		--print(self.Instance.Name .. " took " .. damage .. " damage!")
 		--print(self.HP)
+		if wasGuarding then
+			return guardBroke and "GUARD_BREAK" or "BLOCKED"
+		end
 		return "HIT"
 	end
 end
